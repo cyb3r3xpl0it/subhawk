@@ -24,9 +24,6 @@ builds:
         goarch: arm64
     ldflags:
       - -s -w
-      - -X main.version={{.Version}}
-      - -X main.commit={{.Commit}}
-      - -X main.date={{.Date}}
 
 archives:
   - formats: [tar.gz]
@@ -36,7 +33,6 @@ archives:
     name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
     files:
       - wordlists/common.txt
-      - README.md
 
 checksum:
   name_template: 'checksums.txt'
