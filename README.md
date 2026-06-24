@@ -1,21 +1,40 @@
 # SubHawk
 
-Fast subdomain enumeration tool written in Go. Combines passive sources, active DNS brute-force, HTTP probing, takeover detection, port scanning, cloud detection, tech fingerprinting, recursive enumeration, and more.
+Fast subdomain enumeration and security analysis tool written in Go. Combines passive sources, active DNS brute-force, HTTP probing, takeover detection, port scanning, cloud detection, tech fingerprinting, security audits, and an interactive TUI.
 
 ## Features
 
+### Enumeration
 - **12 passive sources**: crt.sh, AlienVault OTX, HackerTarget, RapidDNS, URLScan, Wayback Machine, ThreatMiner, TLS certificate scraping + VirusTotal, SecurityTrails, Shodan, Censys (API key)
 - **DNS zone transfer (AXFR)**: attempts zone transfer on all nameservers
 - **Active brute-force**: concurrent DNS resolution with custom resolvers and rate limiting
 - **Wildcard detection**: automatically detects and filters wildcard DNS responses
 - **Full DNS records**: 17 record types — A, AAAA, CNAME, MX, TXT, NS, SOA, SRV, CAA, PTR, DMARC, SPF, DNSKEY, DS, TLSA, NAPTR, HTTPS
-- **Cloud detection**: identifies AWS, GCP, Azure, Cloudflare, Fastly, Akamai, and more
-- **HTTP probing**: status code, page title, server header
+- **Permutation engine**: generates and tests mutations from found subdomains
+- **Recursive enumeration**: enumerates subdomains of found subdomains
+
+### HTTP & Cloud
+- **Cloud detection**: AWS (EC2, CloudFront, S3, ELB), GCP, Azure, Cloudflare, Fastly, Akamai, GitHub Pages, Vercel, Netlify, Heroku, DigitalOcean
+- **HTTP probing**: status code, page title, server header, redirect following
 - **Tech fingerprinting**: WordPress, Laravel, Django, Next.js, Nginx, Cloudflare, and 20+ more
 - **Takeover detection**: 18 services (GitHub Pages, Heroku, S3, Netlify, Vercel, Azure, and more)
 - **Port scanning**: checks 30 common ports on active subdomains
-- **Permutation engine**: generates mutations from found subdomains
-- **Recursive enumeration**: enumerates subdomains of found subdomains
+
+### Security Audit (v1.3.0)
+- **Security headers**: audit HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy (score 0-100)
+- **CORS check**: detect misconfigured CORS (reflected arbitrary origin, wildcard, null+credentials)
+- **SSL/TLS audit**: certificate validity, expiry days, self-signed, hostname mismatch, weak protocol
+- **WAF detection**: fingerprint 14 WAF/CDN providers (Cloudflare, AWS WAF, Akamai, Imperva, F5, ModSecurity, and more)
+- **Favicon hash**: Shodan-compatible MurmurHash3 of favicon for asset pivoting
+- **ASN/GeoIP**: autonomous system number and geolocation via ipinfo.io (no API key needed)
+- **JS scraping**: discover endpoints, URLs, and exposed secrets from JavaScript files
+- **Admin panel detection**: probe 30 common admin and login paths
+- **Email security score**: SPF, DMARC, DKIM score (0-100, grade A-F)
+
+### Workflow
+- **Summary report**: aggregated findings — cloud breakdown, HTTP status codes, tech stack, security issues
+- **SQLite storage**: save all results to a local database with `--db results.db`
+- **Interactive TUI**: real-time progress display with counters and live findings
 - **Resume**: saves checkpoint and continues interrupted scans
 - **Diff mode**: shows only new subdomains compared to a previous run
 - **Exclude**: filter subdomains by list or glob patterns
@@ -45,13 +64,24 @@ subhawk -d example.com
 # Show only active subdomains
 subhawk -d example.com -a
 
-# Full recon: all features enabled
-subhawk -d example.com -w wordlists/common.txt -a -p -T --portscan --permutation --dns-records --axfr
+# Full passive + active scan
+subhawk -d example.com -w wordlists/common.txt -a -p -T --portscan --permutation --axfr
+
+# Full security audit
+subhawk -d example.com -a -p --headers --cors --ssl --waf --favicon --asn --js-scrape --admin-detect --summary
+
+# Email security score
+subhawk -d example.com --email-score
 
 # Specific DNS record types
 subhawk -d example.com --dns-records MX,SPF,DMARC
-subhawk -d example.com --dns-records SRV,NAPTR
-subhawk -d example.com --dns-records CAA,TLSA,DNSKEY,DS
+subhawk -d example.com --dns-records SRV,NAPTR,CAA,TLSA
+
+# Save to SQLite database
+subhawk -d example.com -a -p --db results.db
+
+# Interactive TUI mode
+subhawk -d example.com -w wordlists/common.txt --tui
 
 # Export to Nuclei
 subhawk -d example.com -a -f nuclei -o targets.txt
@@ -66,7 +96,7 @@ subhawk -d example.com --diff previous_results.json
 subhawk -d example.com --resume
 
 # Multiple domains from file
-subhawk -D domains.txt -a -p
+subhawk -D domains.txt -a -p --summary
 ```
 
 ## Flags
@@ -93,6 +123,19 @@ subhawk -D domains.txt -a -p
 | `--permutation` | `false` | Generate and test permutations from found subdomains |
 | `--recursive` | `0` | Recursive enumeration depth (0 = disabled) |
 
+### Security Audit
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--headers` | `false` | Audit HTTP security headers (HSTS, CSP, X-Frame-Options, …) |
+| `--cors` | `false` | Check for CORS misconfigurations |
+| `--ssl` | `false` | Audit SSL/TLS certificates |
+| `--waf` | `false` | Detect WAF/CDN provider |
+| `--favicon` | `false` | Calculate Shodan-compatible favicon hash |
+| `--asn` | `false` | Lookup ASN and GeoIP for each IP |
+| `--js-scrape` | `false` | Scrape JS files for endpoints and secrets |
+| `--admin-detect` | `false` | Probe 30 common admin/login paths |
+| `--email-score` | `false` | Calculate email security score (SPF/DMARC/DKIM) |
+
 ### Filtering
 | Flag | Description |
 |------|-------------|
@@ -106,7 +149,10 @@ subhawk -D domains.txt -a -p
 |------|---------|-------------|
 | `-o, --output` | — | Output file |
 | `-f, --format` | `text` | Format: `text`, `json`, `csv`, `nuclei`, `burp` |
+| `--db` | — | Save results to SQLite database (e.g. `results.db`) |
 | `--no-color` | `false` | Disable colored output |
+| `--summary` | `false` | Print summary report at end of scan |
+| `--tui` | `false` | Interactive TUI mode |
 
 ### Performance
 | Flag | Default | Description |
@@ -188,26 +234,37 @@ Use `-c` to specify a custom path:
 subhawk -d example.com -c /path/to/config.yaml
 ```
 
-## Cloud detection
-
-SubHawk automatically identifies the cloud provider from CNAMEs and IP ranges:
-
-AWS (EC2, CloudFront, S3, ELB), Google Cloud, Azure, Cloudflare, Fastly, Akamai, GitHub Pages, Vercel, Netlify, Heroku, DigitalOcean.
-
-## Takeover detection
-
-SubHawk checks CNAMEs against 18 known vulnerable services:
-
-GitHub Pages, Heroku, Amazon S3, Netlify, Vercel, Fastly, Shopify, Tumblr, Zendesk, Freshdesk, Surge.sh, readme.io, Ghost, Azure, Bitbucket, HubSpot, Intercom, Webflow.
-
 ## Output example
 
 ```
-[+] api.example.com [1.2.3.4] [AWS CloudFront] [ports:80,443] [200] [API Portal] [nginx, Next.js]
-[+] dev.example.com [1.2.3.5] [Cloudflare] [401] [Unauthorized]
+[+] api.example.com [1.2.3.4] [AWS CloudFront] [200] [API Portal] [nginx, Next.js] [WAF:Cloudflare] [headers:72/100] [AS13335/US]
+[+] mail.example.com [1.2.3.6] [200] [Webmail] [headers:45/100] [CORS:vulnerable] [SSL:expires-12d]
+[+] admin.example.com [1.2.3.7] [401] [WAF:AWS WAF] [admin:3] [secrets:2]
 [TAKEOVER] old.example.com [GitHub Pages]
 [~] wildcard.example.com [wildcard]
 [-] test.example.com
+
+[*] Summary
+────────────────────────────────────────
+  Total enumerated  : 120
+  Active            : 84
+  Wildcards filtered: 3
+  Security findings:
+    Takeovers               1
+    CORS vulnerable         2
+    Missing HSTS            18
+    SSL expiring (<30d)     3
+    Admin panels found      7
+    JS secrets detected     4
+```
+
+## Email security score example
+
+```
+[*] Email Security Score for example.com: 86/100 (Grade B)
+    SPF  (33): v=spf1 include:_spf.google.com -all
+    DMARC(20): v=DMARC1; p=quarantine; rua=mailto:dmarc@example.com
+    DKIM (34): found
 ```
 
 ## License

@@ -6,6 +6,59 @@ import (
 	"time"
 )
 
+type SecurityHeadersInfo struct {
+	HSTS              bool
+	CSP               bool
+	XFrameOptions     bool
+	XContentTypeOpts  bool
+	ReferrerPolicy    bool
+	PermissionsPolicy bool
+	XXSSProtection    bool
+	Missing           []string
+	Score             int
+}
+
+type CORSInfo struct {
+	Vulnerable            bool
+	AllowsArbitraryOrigin bool
+	AllowsCredentials     bool
+	AllowOrigin           string
+}
+
+type TLSInfo struct {
+	Valid            bool
+	SelfSigned       bool
+	Expired          bool
+	HostnameMismatch bool
+	DaysUntilExpiry  int
+	Version          string
+	Issuer           string
+	Subject          string
+	SANs             []string
+	WeakProtocol     bool
+}
+
+type ASNInfo struct {
+	IP      string
+	ASN     string
+	Country string
+	City    string
+	Region  string
+}
+
+type AdminPanel struct {
+	URL        string
+	StatusCode int
+	Title      string
+}
+
+type JSInfo struct {
+	JSFiles   []string
+	Endpoints []string
+	URLs      []string
+	Secrets   []string
+}
+
 type HTTPInfo struct {
 	URL        string
 	StatusCode int
@@ -40,17 +93,25 @@ type DNSRecords struct {
 }
 
 type Result struct {
-	Subdomain  string
-	IPs        []string
-	CNAME      string
-	Active     bool
-	IsWildcard bool
-	Source     string
-	Cloud      string
-	OpenPorts  []int
-	DNS        *DNSRecords
-	HTTP       *HTTPInfo
-	Takeover   *TakeoverInfo
+	Subdomain       string
+	IPs             []string
+	CNAME           string
+	Active          bool
+	IsWildcard      bool
+	Source          string
+	Cloud           string
+	WAF             string
+	FaviconHash     string
+	OpenPorts       []int
+	DNS             *DNSRecords
+	HTTP            *HTTPInfo
+	Takeover        *TakeoverInfo
+	SecurityHeaders *SecurityHeadersInfo
+	CORS            *CORSInfo
+	TLS             *TLSInfo
+	ASN             *ASNInfo
+	AdminPanels     []AdminPanel
+	JS              *JSInfo
 }
 
 var defaultResolvers = []string{

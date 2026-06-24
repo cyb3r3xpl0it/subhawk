@@ -219,6 +219,36 @@ func (w *Writer) formatText(r resolver.Result) string {
 				sb.WriteString(w.color(colorMagenta, fmt.Sprintf(" [%s]", strings.Join(r.HTTP.Tech, ", "))))
 			}
 		}
+		if r.WAF != "" {
+			sb.WriteString(w.color(colorYellow, fmt.Sprintf(" [WAF:%s]", r.WAF)))
+		}
+		if r.SecurityHeaders != nil {
+			sb.WriteString(w.color(colorGray, fmt.Sprintf(" [headers:%d/100]", r.SecurityHeaders.Score)))
+		}
+		if r.CORS != nil && r.CORS.Vulnerable {
+			sb.WriteString(w.color(colorRed, " [CORS:vulnerable]"))
+		}
+		if r.TLS != nil {
+			if r.TLS.Expired {
+				sb.WriteString(w.color(colorRed, " [SSL:expired]"))
+			} else if !r.TLS.Valid {
+				sb.WriteString(w.color(colorRed, " [SSL:invalid]"))
+			} else if r.TLS.DaysUntilExpiry < 30 {
+				sb.WriteString(w.color(colorYellow, fmt.Sprintf(" [SSL:expires-%dd]", r.TLS.DaysUntilExpiry)))
+			}
+		}
+		if r.FaviconHash != "" {
+			sb.WriteString(w.color(colorGray, fmt.Sprintf(" [favicon:%s]", r.FaviconHash)))
+		}
+		if r.ASN != nil {
+			sb.WriteString(w.color(colorGray, fmt.Sprintf(" [%s/%s]", r.ASN.ASN, r.ASN.Country)))
+		}
+		if len(r.AdminPanels) > 0 {
+			sb.WriteString(w.color(colorYellow, fmt.Sprintf(" [admin:%d]", len(r.AdminPanels))))
+		}
+		if r.JS != nil && len(r.JS.Secrets) > 0 {
+			sb.WriteString(w.color(colorRed, fmt.Sprintf(" [secrets:%d]", len(r.JS.Secrets))))
+		}
 
 	default:
 		sb.WriteString(w.color(colorRed, "[-]"))
@@ -246,7 +276,7 @@ func Banner() {
  ___) | |_| | |_) |  _  | (_| |\ V  V /|   <
 |____/ \__,_|_.__/|_| |_|\__,_| \_/\_/ |_|\_\
 
-         Subdomain Enumeration Tool  v1.2
+         Subdomain Enumeration Tool  v1.3
 
 `)
 }

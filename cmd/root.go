@@ -10,11 +10,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cyb3r3xpl0it/subhawk/internal/admindetect"
+	"github.com/cyb3r3xpl0it/subhawk/internal/asn"
 	"github.com/cyb3r3xpl0it/subhawk/internal/axfr"
 	"github.com/cyb3r3xpl0it/subhawk/internal/checkpoint"
 	"github.com/cyb3r3xpl0it/subhawk/internal/cloud"
 	"github.com/cyb3r3xpl0it/subhawk/internal/config"
+	"github.com/cyb3r3xpl0it/subhawk/internal/cors"
 	"github.com/cyb3r3xpl0it/subhawk/internal/dnsrecords"
+	"github.com/cyb3r3xpl0it/subhawk/internal/emailscore"
+	"github.com/cyb3r3xpl0it/subhawk/internal/favicon"
+	"github.com/cyb3r3xpl0it/subhawk/internal/headers"
+	"github.com/cyb3r3xpl0it/subhawk/internal/jsscrape"
 	"github.com/cyb3r3xpl0it/subhawk/internal/output"
 	"github.com/cyb3r3xpl0it/subhawk/internal/permutation"
 	"github.com/cyb3r3xpl0it/subhawk/internal/portscan"
@@ -22,35 +29,52 @@ import (
 	"github.com/cyb3r3xpl0it/subhawk/internal/ratelimit"
 	"github.com/cyb3r3xpl0it/subhawk/internal/resolver"
 	"github.com/cyb3r3xpl0it/subhawk/internal/sources"
+	"github.com/cyb3r3xpl0it/subhawk/internal/ssl"
+	"github.com/cyb3r3xpl0it/subhawk/internal/store"
+	"github.com/cyb3r3xpl0it/subhawk/internal/summary"
 	"github.com/cyb3r3xpl0it/subhawk/internal/takeover"
+	"github.com/cyb3r3xpl0it/subhawk/internal/tui"
+	"github.com/cyb3r3xpl0it/subhawk/internal/waf"
 	"github.com/cyb3r3xpl0it/subhawk/internal/wildcard"
 	"github.com/spf13/cobra"
 )
 
 var (
-	domain        string
-	domainsFile   string
-	wordlist      string
-	outputFile    string
-	outputFmt     string
-	configFile    string
-	diffFile      string
-	excludeList   string
-	excludeFile   string
-	threads       int
-	timeout       int
-	rateLimit     int
+	domain         string
+	domainsFile    string
+	wordlist       string
+	outputFile     string
+	outputFmt      string
+	configFile     string
+	diffFile       string
+	excludeList    string
+	excludeFile    string
+	dbPath         string
+	threads        int
+	timeout        int
+	rateLimit      int
 	recursiveDepth int
-	resolvers     []string
-	activeOnly    bool
-	noColor       bool
-	doProbe       bool
-	doTakeover    bool
-	doPerm        bool
-	doPortScan    bool
+	resolvers      []string
 	dnsRecordTypes []string
-	doResume      bool
-	doAxfr        bool
+	activeOnly     bool
+	noColor        bool
+	doProbe        bool
+	doTakeover     bool
+	doPerm         bool
+	doPortScan     bool
+	doResume       bool
+	doAxfr         bool
+	doHeaders      bool
+	doCORS         bool
+	doSSL          bool
+	doWAF          bool
+	doFavicon      bool
+	doASN          bool
+	doJS           bool
+	doAdmin        bool
+	doEmailScore   bool
+	doSummary      bool
+	doTUI          bool
 )
 
 var rootCmd = &cobra.Command{
@@ -80,6 +104,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&outputFmt, "format", "f", "text", "Output format: text, json, csv, nuclei, burp")
 	rootCmd.Flags().BoolVar(&noColor, "no-color", false, "Disable color output")
 	rootCmd.Flags().BoolVarP(&activeOnly, "active", "a", false, "Show only active subdomains")
+	rootCmd.Flags().StringVar(&dbPath, "db", "", "Save results to SQLite database (e.g. results.db)")
 
 	// Analysis
 	rootCmd.Flags().BoolVarP(&doProbe, "probe", "p", false, "HTTP probe + tech fingerprinting")
@@ -88,6 +113,19 @@ func init() {
 	rootCmd.Flags().BoolVar(&doPortScan, "portscan", false, "Scan common ports on active subdomains")
 	rootCmd.Flags().StringSliceVar(&dnsRecordTypes, "dns-records", nil, "Fetch DNS records: A,AAAA,CNAME,MX,TXT,NS (empty = all)")
 	rootCmd.Flags().IntVar(&recursiveDepth, "recursive", 0, "Recursive enumeration depth (0=disabled)")
+
+	// Security analysis (v1.3.0)
+	rootCmd.Flags().BoolVar(&doHeaders, "headers", false, "Audit HTTP security headers")
+	rootCmd.Flags().BoolVar(&doCORS, "cors", false, "Check for CORS misconfigurations")
+	rootCmd.Flags().BoolVar(&doSSL, "ssl", false, "Audit SSL/TLS certificates")
+	rootCmd.Flags().BoolVar(&doWAF, "waf", false, "Detect WAF/CDN")
+	rootCmd.Flags().BoolVar(&doFavicon, "favicon", false, "Calculate favicon hash (Shodan-compatible)")
+	rootCmd.Flags().BoolVar(&doASN, "asn", false, "Lookup ASN/GeoIP information")
+	rootCmd.Flags().BoolVar(&doJS, "js-scrape", false, "Scrape JS files for endpoints and secrets")
+	rootCmd.Flags().BoolVar(&doAdmin, "admin-detect", false, "Detect admin/login panels")
+	rootCmd.Flags().BoolVar(&doEmailScore, "email-score", false, "Calculate email security score (SPF/DMARC/DKIM)")
+	rootCmd.Flags().BoolVar(&doSummary, "summary", false, "Print summary report at end of scan")
+	rootCmd.Flags().BoolVar(&doTUI, "tui", false, "Interactive TUI mode")
 
 	// Filtering
 	rootCmd.Flags().StringVar(&excludeList, "exclude", "", "Comma-separated subdomains/patterns to exclude")
@@ -124,7 +162,18 @@ func run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--domain or --domains-file is required")
 	}
 
-	output.Banner()
+	// TUI mode: run in alt-screen with a bubbletea program
+	var tuiProg *tui.Program
+	if doTUI {
+		tuiProg = tui.New()
+		go func() {
+			if err := tuiProg.Start(); err != nil {
+				fmt.Fprintf(os.Stderr, "[!] TUI error: %v\n", err)
+			}
+		}()
+	} else {
+		output.Banner()
+	}
 
 	cfg, err := config.Load(configFile)
 	if err != nil {
@@ -165,6 +214,23 @@ func run(cmd *cobra.Command, args []string) error {
 
 	writer.WriteHeader()
 
+	// SQLite database
+	var db *store.DB
+	if dbPath != "" {
+		db, err = store.Open(dbPath)
+		if err != nil {
+			return fmt.Errorf("database error: %w", err)
+		}
+		defer db.Close()
+		fmt.Printf("[*] Database  : %s\n", dbPath)
+	}
+
+	// Summary stats
+	var stats *summary.Stats
+	if doSummary {
+		stats = summary.New()
+	}
+
 	srcOpts := sources.Options{
 		WordlistPath:      wordlist,
 		VirusTotalKey:     cfg.APIKeys.VirusTotal,
@@ -175,44 +241,86 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, d := range domains {
-		if err := enumerate(d, srcOpts, writer, diffSet, excludePatterns, 0); err != nil {
+		if err := enumerate(d, srcOpts, writer, db, stats, tuiProg, diffSet, excludePatterns, 0); err != nil {
 			fmt.Fprintf(os.Stderr, "[!] Error enumerating %s: %v\n", d, err)
 		}
+	}
+
+	// Email security score (per-domain)
+	if doEmailScore {
+		for _, d := range domains {
+			sc := emailscore.Calculate(d)
+			fmt.Printf("\n[*] Email Security Score for %s: %d/100 (Grade %s)\n", d, sc.Total, sc.Grade)
+			if sc.SPFRecord != "" {
+				fmt.Printf("    SPF  (%2d): %s\n", sc.SPF, sc.SPFRecord)
+			} else {
+				fmt.Printf("    SPF  (%2d): not found\n", sc.SPF)
+			}
+			if sc.DMARCRecord != "" {
+				fmt.Printf("    DMARC(%2d): %s\n", sc.DMARC, sc.DMARCRecord)
+			} else {
+				fmt.Printf("    DMARC(%2d): not found\n", sc.DMARC)
+			}
+			if sc.DKIMFound {
+				fmt.Printf("    DKIM (%2d): found\n", sc.DKIM)
+			} else {
+				fmt.Printf("    DKIM (%2d): not found\n", sc.DKIM)
+			}
+		}
+	}
+
+	// Summary report
+	if doSummary && stats != nil {
+		stats.Print()
+	}
+
+	// Signal TUI done
+	if tuiProg != nil {
+		tuiProg.Done()
+		time.Sleep(200 * time.Millisecond)
 	}
 
 	return nil
 }
 
-func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, diffSet, excludePatterns map[string]bool, depth int) error {
+func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, db *store.DB, stats *summary.Stats, tuiProg *tui.Program, diffSet, excludePatterns map[string]bool, depth int) error {
 	tout := time.Duration(timeout) * time.Second
 	ns := "8.8.8.8:53"
 	if len(resolvers) > 0 {
 		ns = resolvers[0]
 	}
 
-	fmt.Printf("[*] Target  : %s", domain)
-	if depth > 0 {
-		fmt.Printf(" (recursive depth %d)", depth)
+	logf := func(format string, a ...interface{}) {
+		if tuiProg != nil {
+			tuiProg.AddInfo(fmt.Sprintf(format, a...))
+		} else {
+			fmt.Printf(format+"\n", a...)
+		}
 	}
-	fmt.Printf("\n[*] Threads : %d\n", threads)
+
+	logf("[*] Target  : %s", domain)
+	if depth > 0 {
+		logf("[*] Recursive depth: %d", depth)
+	}
+	logf("[*] Threads : %d", threads)
 
 	// Zone transfer
 	if doAxfr {
-		fmt.Printf("[~] Attempting zone transfer...\n")
+		logf("[~] Attempting zone transfer...")
 		if subs, err := axfr.ZoneTransfer(domain); err == nil {
-			fmt.Printf("[!] Zone transfer SUCCESS: %d records\n", len(subs))
+			logf("[!] Zone transfer SUCCESS: %d records", len(subs))
 		} else {
-			fmt.Printf("[*] Zone transfer: %v\n", err)
+			logf("[*] Zone transfer: %v", err)
 		}
 	}
 
 	// Wildcard detection
 	res := resolver.New(resolvers, tout)
 	if isWild, wIPs := wildcard.Detect(domain, ns, tout); isWild {
-		fmt.Printf("[!] Wildcard DNS detected → filtering %v\n", wIPs)
+		logf("[!] Wildcard DNS detected → filtering %v", wIPs)
 		res.SetWildcardIPs(wIPs)
 	} else {
-		fmt.Printf("[*] No wildcard detected\n")
+		logf("[*] No wildcard detected")
 	}
 
 	// Rate limiter
@@ -224,7 +332,7 @@ func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, di
 	if doResume {
 		ckpt, _ = checkpoint.Load(domain)
 		if ckpt != nil {
-			fmt.Printf("[*] Resuming from checkpoint: %d subdomains found previously\n", len(ckpt.Found))
+			logf("[*] Resuming from checkpoint: %d subdomains found previously", len(ckpt.Found))
 		}
 	}
 	if ckpt == nil {
@@ -241,6 +349,10 @@ func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, di
 		allSubs[s] = true
 	}
 
+	if tuiProg != nil {
+		tuiProg.SetPhase("Enumerating sources")
+	}
+
 	// Source enumeration
 	var mu sync.Mutex
 	subCh := make(chan string, 5000)
@@ -249,13 +361,13 @@ func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, di
 
 	for _, src := range srcList {
 		if completedSources[src.Name()] {
-			fmt.Printf("[~] Source: %s (skipped - already completed)\n", src.Name())
+			logf("[~] Source: %s (skipped)", src.Name())
 			continue
 		}
 		srcWg.Add(1)
 		go func(s sources.Source) {
 			defer srcWg.Done()
-			fmt.Printf("[~] Source: %s\n", s.Name())
+			logf("[~] Source: %s", s.Name())
 			subs, err := s.Enumerate(domain)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "[!] %s: %v\n", s.Name(), err)
@@ -278,6 +390,10 @@ func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, di
 		srcWg.Wait()
 		close(subCh)
 	}()
+
+	if tuiProg != nil {
+		tuiProg.SetPhase("Resolving DNS")
+	}
 
 	// DNS resolution
 	sem := make(chan struct{}, threads)
@@ -313,20 +429,29 @@ func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, di
 				ckpt.Found = append(ckpt.Found, s)
 				mu.Unlock()
 				checkpoint.Save(ckpt)
+				if tuiProg != nil {
+					tuiProg.AddFound(s)
+				}
+			} else if tuiProg == nil {
+				writer.Write(result)
 			}
-			writer.Write(result)
+			if tuiProg == nil {
+				if result.Active {
+					writer.Write(result)
+				}
+			}
 		}(sub)
 	}
 	resolveWg.Wait()
 
 	// Full DNS records
-	if len(dnsRecordTypes) > 0 || dnsRecordTypes != nil {
+	if len(dnsRecordTypes) >= 0 && dnsRecordTypes != nil {
 		types := dnsrecords.ParseTypes(dnsRecordTypes)
 		label := "all"
 		if len(dnsRecordTypes) > 0 {
 			label = strings.Join(dnsRecordTypes, ",")
 		}
-		fmt.Printf("\n[*] Fetching DNS records [%s] for %d subdomains...\n", label, len(activeSubs))
+		logf("[*] Fetching DNS records [%s] for %d subdomains...", label, len(activeSubs))
 		var dnsWg sync.WaitGroup
 		dnsSem := make(chan struct{}, threads)
 		for i := range activeSubs {
@@ -346,7 +471,6 @@ func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, di
 					TLSA: rec.TLSA, NAPTR: rec.NAPTR,
 					HTTPS: rec.HTTPS,
 				}
-				writer.Write(activeSubs[idx])
 			}(i)
 		}
 		dnsWg.Wait()
@@ -354,7 +478,10 @@ func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, di
 
 	// Port scanning
 	if doPortScan && len(activeSubs) > 0 {
-		fmt.Printf("\n[*] Port scanning %d active subdomains...\n", len(activeSubs))
+		logf("[*] Port scanning %d active subdomains...", len(activeSubs))
+		if tuiProg != nil {
+			tuiProg.SetPhase("Port scanning")
+		}
 		var psWg sync.WaitGroup
 		psSem := make(chan struct{}, 10)
 		for i := range activeSubs {
@@ -368,9 +495,6 @@ func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, di
 					portscan.DefaultPorts,
 					3*time.Second,
 				)
-				if len(activeSubs[idx].OpenPorts) > 0 {
-					writer.Write(activeSubs[idx])
-				}
 			}(i)
 		}
 		psWg.Wait()
@@ -378,13 +502,16 @@ func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, di
 
 	// Permutations
 	if doPerm && len(activeSubs) > 0 {
-		fmt.Printf("\n[*] Generating permutations from %d found subdomains...\n", len(activeSubs))
+		logf("[*] Generating permutations from %d found subdomains...", len(activeSubs))
 		foundNames := make([]string, len(activeSubs))
 		for i, r := range activeSubs {
 			foundNames[i] = r.Subdomain
 		}
 		perms := permutation.Generate(foundNames, domain)
-		fmt.Printf("[*] Testing %d permutations...\n", len(perms))
+		logf("[*] Testing %d permutations...", len(perms))
+		if tuiProg != nil {
+			tuiProg.SetPhase("Permutations")
+		}
 
 		var permWg sync.WaitGroup
 		permSem := make(chan struct{}, threads)
@@ -413,7 +540,11 @@ func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, di
 				found++
 				activeSubs = append(activeSubs, result)
 				mu.Unlock()
-				writer.Write(result)
+				if tuiProg != nil {
+					tuiProg.AddFound(sub)
+				} else {
+					writer.Write(result)
+				}
 			}(p)
 		}
 		permWg.Wait()
@@ -421,7 +552,10 @@ func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, di
 
 	// HTTP probing + tech fingerprinting
 	if doProbe && len(activeSubs) > 0 {
-		fmt.Printf("\n[*] HTTP probing %d active subdomains...\n", len(activeSubs))
+		logf("[*] HTTP probing %d active subdomains...", len(activeSubs))
+		if tuiProg != nil {
+			tuiProg.SetPhase("HTTP probing")
+		}
 		var probeWg sync.WaitGroup
 		probeSem := make(chan struct{}, 20)
 		for i := range activeSubs {
@@ -431,17 +565,192 @@ func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, di
 				defer probeWg.Done()
 				defer func() { <-probeSem }()
 				activeSubs[idx].HTTP = probe.Probe(activeSubs[idx].Subdomain)
-				if activeSubs[idx].HTTP != nil {
-					writer.Write(activeSubs[idx])
-				}
 			}(i)
 		}
 		probeWg.Wait()
 	}
 
+	// WAF detection
+	if doWAF && len(activeSubs) > 0 {
+		logf("[*] WAF detection for %d subdomains...", len(activeSubs))
+		if tuiProg != nil {
+			tuiProg.SetPhase("WAF detection")
+		}
+		var wafWg sync.WaitGroup
+		wafSem := make(chan struct{}, 20)
+		for i := range activeSubs {
+			wafWg.Add(1)
+			wafSem <- struct{}{}
+			go func(idx int) {
+				defer wafWg.Done()
+				defer func() { <-wafSem }()
+				activeSubs[idx].WAF = waf.Detect(activeSubs[idx].Subdomain)
+			}(i)
+		}
+		wafWg.Wait()
+	}
+
+	// Security headers audit
+	if doHeaders && len(activeSubs) > 0 {
+		logf("[*] Security headers audit for %d subdomains...", len(activeSubs))
+		if tuiProg != nil {
+			tuiProg.SetPhase("Security headers")
+		}
+		var hWg sync.WaitGroup
+		hSem := make(chan struct{}, 20)
+		for i := range activeSubs {
+			hWg.Add(1)
+			hSem <- struct{}{}
+			go func(idx int) {
+				defer hWg.Done()
+				defer func() { <-hSem }()
+				info := headers.Audit(activeSubs[idx].Subdomain)
+				activeSubs[idx].SecurityHeaders = (*resolver.SecurityHeadersInfo)(info)
+			}(i)
+		}
+		hWg.Wait()
+	}
+
+	// CORS check
+	if doCORS && len(activeSubs) > 0 {
+		logf("[*] CORS check for %d subdomains...", len(activeSubs))
+		if tuiProg != nil {
+			tuiProg.SetPhase("CORS check")
+		}
+		var corsWg sync.WaitGroup
+		corsSem := make(chan struct{}, 20)
+		for i := range activeSubs {
+			corsWg.Add(1)
+			corsSem <- struct{}{}
+			go func(idx int) {
+				defer corsWg.Done()
+				defer func() { <-corsSem }()
+				info := cors.Check(activeSubs[idx].Subdomain)
+				activeSubs[idx].CORS = (*resolver.CORSInfo)(info)
+				if info != nil && info.Vulnerable && tuiProg != nil {
+					tuiProg.AddCORS()
+				}
+			}(i)
+		}
+		corsWg.Wait()
+	}
+
+	// SSL/TLS audit
+	if doSSL && len(activeSubs) > 0 {
+		logf("[*] SSL/TLS audit for %d subdomains...", len(activeSubs))
+		if tuiProg != nil {
+			tuiProg.SetPhase("SSL/TLS audit")
+		}
+		var sslWg sync.WaitGroup
+		sslSem := make(chan struct{}, 20)
+		for i := range activeSubs {
+			sslWg.Add(1)
+			sslSem <- struct{}{}
+			go func(idx int) {
+				defer sslWg.Done()
+				defer func() { <-sslSem }()
+				info := ssl.Audit(activeSubs[idx].Subdomain)
+				activeSubs[idx].TLS = (*resolver.TLSInfo)(info)
+			}(i)
+		}
+		sslWg.Wait()
+	}
+
+	// Favicon hash
+	if doFavicon && len(activeSubs) > 0 {
+		logf("[*] Favicon hashing for %d subdomains...", len(activeSubs))
+		if tuiProg != nil {
+			tuiProg.SetPhase("Favicon hash")
+		}
+		var favWg sync.WaitGroup
+		favSem := make(chan struct{}, 20)
+		for i := range activeSubs {
+			favWg.Add(1)
+			favSem <- struct{}{}
+			go func(idx int) {
+				defer favWg.Done()
+				defer func() { <-favSem }()
+				activeSubs[idx].FaviconHash = favicon.Hash(activeSubs[idx].Subdomain)
+			}(i)
+		}
+		favWg.Wait()
+	}
+
+	// ASN/GeoIP
+	if doASN && len(activeSubs) > 0 {
+		logf("[*] ASN/GeoIP lookup for %d subdomains...", len(activeSubs))
+		if tuiProg != nil {
+			tuiProg.SetPhase("ASN lookup")
+		}
+		var asnWg sync.WaitGroup
+		asnSem := make(chan struct{}, 10)
+		for i := range activeSubs {
+			if len(activeSubs[i].IPs) == 0 {
+				continue
+			}
+			asnWg.Add(1)
+			asnSem <- struct{}{}
+			go func(idx int) {
+				defer asnWg.Done()
+				defer func() { <-asnSem }()
+				info := asn.Lookup(activeSubs[idx].IPs[0])
+				activeSubs[idx].ASN = (*resolver.ASNInfo)(info)
+			}(i)
+		}
+		asnWg.Wait()
+	}
+
+	// JS scraping
+	if doJS && len(activeSubs) > 0 {
+		logf("[*] JS scraping for %d subdomains...", len(activeSubs))
+		if tuiProg != nil {
+			tuiProg.SetPhase("JS scraping")
+		}
+		var jsWg sync.WaitGroup
+		jsSem := make(chan struct{}, 10)
+		for i := range activeSubs {
+			jsWg.Add(1)
+			jsSem <- struct{}{}
+			go func(idx int) {
+				defer jsWg.Done()
+				defer func() { <-jsSem }()
+				result := jsscrape.Scrape(activeSubs[idx].Subdomain)
+				activeSubs[idx].JS = (*resolver.JSInfo)(result)
+			}(i)
+		}
+		jsWg.Wait()
+	}
+
+	// Admin panel detection
+	if doAdmin && len(activeSubs) > 0 {
+		logf("[*] Admin panel detection for %d subdomains...", len(activeSubs))
+		if tuiProg != nil {
+			tuiProg.SetPhase("Admin detection")
+		}
+		var adminWg sync.WaitGroup
+		adminSem := make(chan struct{}, 10)
+		for i := range activeSubs {
+			adminWg.Add(1)
+			adminSem <- struct{}{}
+			go func(idx int) {
+				defer adminWg.Done()
+				defer func() { <-adminSem }()
+				panels := admindetect.Detect(activeSubs[idx].Subdomain)
+				for _, p := range panels {
+					activeSubs[idx].AdminPanels = append(activeSubs[idx].AdminPanels,
+						resolver.AdminPanel{URL: p.URL, StatusCode: p.StatusCode, Title: p.Title})
+				}
+			}(i)
+		}
+		adminWg.Wait()
+	}
+
 	// Takeover detection
 	if doTakeover && len(activeSubs) > 0 {
-		fmt.Printf("\n[*] Checking takeover for %d subdomains...\n", len(activeSubs))
+		logf("[*] Checking takeover for %d subdomains...", len(activeSubs))
+		if tuiProg != nil {
+			tuiProg.SetPhase("Takeover check")
+		}
 		var tkWg sync.WaitGroup
 		tkSem := make(chan struct{}, 20)
 		for i := range activeSubs {
@@ -456,29 +765,47 @@ func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, di
 				info := takeover.Check(activeSubs[idx])
 				if info != nil {
 					activeSubs[idx].Takeover = info
-					writer.Write(activeSubs[idx])
+					if tuiProg != nil {
+						tuiProg.AddTakeover(activeSubs[idx].Subdomain + " [" + info.Service + "]")
+					}
 				}
 			}(i)
 		}
 		tkWg.Wait()
 	}
 
+	// Write all final results, update stats, save to DB
+	if tuiProg != nil {
+		tuiProg.SetPhase("Writing results")
+	}
+	for _, r := range activeSubs {
+		writer.Write(r)
+		if stats != nil {
+			stats.Add(r)
+		}
+		if db != nil {
+			_ = db.Save(domain, r)
+		}
+	}
+
 	// Recursive enumeration
 	if recursiveDepth > depth && len(activeSubs) > 0 {
-		fmt.Printf("\n[*] Recursive enumeration (depth %d → %d)...\n", depth, depth+1)
+		logf("[*] Recursive enumeration (depth %d → %d)...", depth, depth+1)
 		for _, r := range activeSubs {
 			sub := r.Subdomain
 			if sub == domain {
 				continue
 			}
-			enumerate(sub, srcOpts, writer, diffSet, excludePatterns, depth+1)
+			enumerate(sub, srcOpts, writer, db, stats, tuiProg, diffSet, excludePatterns, depth+1)
 		}
 	}
 
-	fmt.Printf("\n[*] Total enumerated : %d\n", total)
-	fmt.Printf("[*] Active subdomains: %d\n", found)
-	if outputFile != "" {
-		fmt.Printf("[*] Saved to         : %s\n", outputFile)
+	if tuiProg == nil {
+		fmt.Printf("\n[*] Total enumerated : %d\n", total)
+		fmt.Printf("[*] Active subdomains: %d\n", found)
+		if outputFile != "" {
+			fmt.Printf("[*] Saved to         : %s\n", outputFile)
+		}
 	}
 
 	// Clear checkpoint on successful completion
@@ -522,7 +849,6 @@ func loadDiffSet(file string, set map[string]bool) error {
 	if err != nil {
 		return err
 	}
-	// Try JSON (array of results or subdomains)
 	var results []struct {
 		Subdomain string `json:"subdomain"`
 	}
@@ -534,7 +860,6 @@ func loadDiffSet(file string, set map[string]bool) error {
 		}
 		return nil
 	}
-	// Fallback: plain text, one subdomain per line
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
