@@ -11,11 +11,21 @@ type HTTPInfo struct {
 	StatusCode int
 	Title      string
 	Server     string
+	Tech       []string
 }
 
 type TakeoverInfo struct {
 	Service     string
 	Fingerprint string
+}
+
+type DNSRecords struct {
+	A     []string
+	AAAA  []string
+	MX    []string
+	TXT   []string
+	NS    []string
+	CNAME string
 }
 
 type Result struct {
@@ -25,6 +35,9 @@ type Result struct {
 	Active     bool
 	IsWildcard bool
 	Source     string
+	Cloud      string
+	OpenPorts  []int
+	DNS        *DNSRecords
 	HTTP       *HTTPInfo
 	Takeover   *TakeoverInfo
 }
@@ -37,9 +50,9 @@ var defaultResolvers = []string{
 }
 
 type Resolver struct {
-	resolvers    []string
-	timeout      time.Duration
-	wildcardIPs  map[string]bool
+	resolvers   []string
+	timeout     time.Duration
+	wildcardIPs map[string]bool
 }
 
 func New(resolvers []string, timeout time.Duration) *Resolver {
@@ -79,7 +92,6 @@ func (r *Resolver) Resolve(subdomain string) Result {
 			result.IPs = addrs
 			result.Active = true
 
-			// Check if all IPs match wildcard
 			if len(r.wildcardIPs) > 0 {
 				wildcard := true
 				for _, ip := range addrs {

@@ -13,9 +13,11 @@ import (
 type Format string
 
 const (
-	FormatText Format = "text"
-	FormatJSON Format = "json"
-	FormatCSV  Format = "csv"
+	FormatText   Format = "text"
+	FormatJSON   Format = "json"
+	FormatCSV    Format = "csv"
+	FormatNuclei Format = "nuclei"
+	FormatBurp   Format = "burp"
 )
 
 const (
@@ -25,13 +27,21 @@ const (
 	colorYellow = "\033[33m"
 	colorGray   = "\033[90m"
 	colorCyan   = "\033[36m"
+	colorMagenta = "\033[35m"
 )
+
+type burpEntry struct {
+	Enabled  bool   `json:"enabled"`
+	Host     string `json:"host"`
+	Protocol string `json:"protocol"`
+}
 
 type Writer struct {
 	mu      sync.Mutex
 	format  Format
 	file    *os.File
 	noColor bool
+	burpBuf []burpEntry
 }
 
 func New(format Format, outputFile string, noColor bool) (*Writer, error) {
@@ -47,6 +57,23 @@ func New(format Format, outputFile string, noColor bool) (*Writer, error) {
 }
 
 func (w *Writer) Close() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.format == FormatBurp && w.file != nil {
+		scope := map[string]interface{}{
+			"target": map[string]interface{}{
+				"scope": map[string]interface{}{
+					"advanced_mode": true,
+					"exclude":       []interface{}{},
+					"include":       w.burpBuf,
+				},
+			},
+		}
+		data, _ := json.MarshalIndent(scope, "", "  ")
+		w.file.Write(data)
+	}
+
 	if w.file != nil {
 		w.file.Close()
 	}
@@ -73,37 +100,81 @@ func (w *Writer) Write(r resolver.Result) {
 		}
 
 	case FormatCSV:
-		httpStatus := ""
-		httpTitle := ""
-		if r.HTTP != nil {
-			httpStatus = fmt.Sprintf("%d", r.HTTP.StatusCode)
-			httpTitle = r.HTTP.Title
-		}
-		takeover := ""
-		if r.Takeover != nil {
-			takeover = r.Takeover.Service
-		}
-		line := fmt.Sprintf("%s,%s,%s,%v,%s,%s,%s",
-			r.Subdomain,
-			strings.Join(r.IPs, ";"),
-			r.CNAME,
-			r.Active,
-			httpStatus,
-			httpTitle,
-			takeover,
-		)
-		fmt.Println(line)
-		if w.file != nil {
-			fmt.Fprintln(w.file, line)
-		}
+		w.writeCSV(r)
+
+	case FormatNuclei:
+		w.writeNuclei(r)
+
+	case FormatBurp:
+		w.writeBurp(r)
 
 	default:
-		line := w.formatText(r)
-		fmt.Println(line)
+		fmt.Println(w.formatText(r))
 		if w.file != nil {
 			fmt.Fprintln(w.file, r.Subdomain)
 		}
 	}
+}
+
+func (w *Writer) writeCSV(r resolver.Result) {
+	httpStatus, httpTitle, httpTech := "", "", ""
+	if r.HTTP != nil {
+		httpStatus = fmt.Sprintf("%d", r.HTTP.StatusCode)
+		httpTitle = r.HTTP.Title
+		httpTech = strings.Join(r.HTTP.Tech, ";")
+	}
+	tkover := ""
+	if r.Takeover != nil {
+		tkover = r.Takeover.Service
+	}
+	ports := ""
+	for i, p := range r.OpenPorts {
+		if i > 0 {
+			ports += ";"
+		}
+		ports += fmt.Sprintf("%d", p)
+	}
+	line := fmt.Sprintf("%s,%s,%s,%v,%s,%s,%s,%s,%s,%s",
+		r.Subdomain, strings.Join(r.IPs, ";"), r.CNAME,
+		r.Active, httpStatus, httpTitle, httpTech,
+		tkover, r.Cloud, ports,
+	)
+	fmt.Println(line)
+	if w.file != nil {
+		fmt.Fprintln(w.file, line)
+	}
+}
+
+func (w *Writer) writeNuclei(r resolver.Result) {
+	if !r.Active {
+		return
+	}
+	scheme := "http"
+	if r.HTTP != nil && strings.HasPrefix(r.HTTP.URL, "https") {
+		scheme = "https"
+	}
+	line := fmt.Sprintf("%s://%s", scheme, r.Subdomain)
+	fmt.Println(line)
+	if w.file != nil {
+		fmt.Fprintln(w.file, line)
+	}
+}
+
+func (w *Writer) writeBurp(r resolver.Result) {
+	if !r.Active {
+		return
+	}
+	proto := "http"
+	if r.HTTP != nil && strings.HasPrefix(r.HTTP.URL, "https") {
+		proto = "https"
+	}
+	line := fmt.Sprintf("[burp] %s://%s", proto, r.Subdomain)
+	fmt.Println(line)
+	w.burpBuf = append(w.burpBuf, burpEntry{
+		Enabled:  true,
+		Host:     r.Subdomain,
+		Protocol: proto,
+	})
 }
 
 func (w *Writer) formatText(r resolver.Result) string {
@@ -126,6 +197,16 @@ func (w *Writer) formatText(r resolver.Result) string {
 		if len(r.IPs) > 0 {
 			sb.WriteString(w.color(colorGray, fmt.Sprintf(" [%s]", strings.Join(r.IPs, ", "))))
 		}
+		if r.Cloud != "" {
+			sb.WriteString(w.color(colorMagenta, fmt.Sprintf(" [%s]", r.Cloud)))
+		}
+		if len(r.OpenPorts) > 0 {
+			ports := make([]string, len(r.OpenPorts))
+			for i, p := range r.OpenPorts {
+				ports[i] = fmt.Sprintf("%d", p)
+			}
+			sb.WriteString(w.color(colorCyan, fmt.Sprintf(" [ports:%s]", strings.Join(ports, ","))))
+		}
 		if r.HTTP != nil {
 			sb.WriteString(w.color(colorCyan, fmt.Sprintf(" [%d]", r.HTTP.StatusCode)))
 			if r.HTTP.Title != "" {
@@ -133,6 +214,9 @@ func (w *Writer) formatText(r resolver.Result) string {
 			}
 			if r.HTTP.Server != "" {
 				sb.WriteString(w.color(colorGray, fmt.Sprintf(" [%s]", r.HTTP.Server)))
+			}
+			if len(r.HTTP.Tech) > 0 {
+				sb.WriteString(w.color(colorMagenta, fmt.Sprintf(" [%s]", strings.Join(r.HTTP.Tech, ", "))))
 			}
 		}
 
@@ -146,7 +230,7 @@ func (w *Writer) formatText(r resolver.Result) string {
 
 func (w *Writer) WriteHeader() {
 	if w.format == FormatCSV {
-		header := "subdomain,ips,cname,active,http_status,http_title,takeover"
+		header := "subdomain,ips,cname,active,http_status,http_title,http_tech,takeover,cloud,ports"
 		fmt.Println(header)
 		if w.file != nil {
 			fmt.Fprintln(w.file, header)
@@ -162,7 +246,7 @@ func Banner() {
  ___) | |_| | |_) |  _  | (_| |\ V  V /|   <
 |____/ \__,_|_.__/|_| |_|\__,_| \_/\_/ |_|\_\
 
-         Subdomain Enumeration Tool  v1.0
+         Subdomain Enumeration Tool  v1.2
 
 `)
 }

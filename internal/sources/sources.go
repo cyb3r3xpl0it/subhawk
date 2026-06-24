@@ -2,10 +2,12 @@ package sources
 
 import (
 	"bufio"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -345,6 +347,32 @@ func (s *Censys) Enumerate(domain string) ([]string, error) {
 	return filterSubs(all, domain), nil
 }
 
+// ---- TLS Certificate Scraper ----
+
+type TLSScrape struct{}
+
+func (s *TLSScrape) Name() string { return "tls" }
+
+func (s *TLSScrape) Enumerate(domain string) ([]string, error) {
+	conf := &tls.Config{InsecureSkipVerify: true}
+	conn, err := tls.DialWithDialer(
+		&net.Dialer{Timeout: 10 * time.Second},
+		"tcp", domain+":443", conf,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	var all []string
+	for _, cert := range conn.ConnectionState().PeerCertificates {
+		for _, san := range cert.DNSNames {
+			all = append(all, strings.TrimPrefix(san, "*."))
+		}
+	}
+	return filterSubs(all, domain), nil
+}
+
 // ---- Wordlist ----
 
 type Wordlist struct{ Path string }
@@ -387,6 +415,7 @@ func All(opts Options) []Source {
 		&HackerTarget{},
 		&RapidDNS{},
 		&URLScan{},
+		&TLSScrape{},
 		&Wayback{},
 		&ThreatMiner{},
 	}
