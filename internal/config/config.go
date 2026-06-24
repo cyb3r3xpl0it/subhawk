@@ -21,11 +21,7 @@ type Config struct {
 
 func Load(path string) (*Config, error) {
 	if path == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return &Config{}, nil
-		}
-		path = filepath.Join(home, ".config", "subhawk", "config.yaml")
+		path = defaultPath()
 	}
 
 	data, err := os.ReadFile(path)
@@ -43,13 +39,19 @@ func Load(path string) (*Config, error) {
 	return &cfg, nil
 }
 
+func defaultPath() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		// fallback to home/.config
+		home, _ := os.UserHomeDir()
+		dir = filepath.Join(home, ".config")
+	}
+	return filepath.Join(dir, "subhawk", "config.yaml")
+}
+
 func WriteDefault(path string) error {
 	if path == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		path = filepath.Join(home, ".config", "subhawk", "config.yaml")
+		path = defaultPath()
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {

@@ -166,13 +166,26 @@ subhawk -D domains.txt -a -p
 Run `subhawk init-config` to create the default config file, then add your API keys:
 
 ```yaml
-# ~/.config/subhawk/config.yaml
 api_keys:
   virustotal: ""
   securitytrails: ""
   shodan: ""
   censys_id: ""
   censys_secret: ""
+```
+
+Default config location by OS:
+
+| OS | Path |
+|----|------|
+| Linux | `~/.config/subhawk/config.yaml` |
+| macOS | `~/Library/Application Support/subhawk/config.yaml` |
+| Windows | `%APPDATA%\subhawk\config.yaml` |
+
+Use `-c` to specify a custom path:
+
+```bash
+subhawk -d example.com -c /path/to/config.yaml
 ```
 
 ## Cloud detection
