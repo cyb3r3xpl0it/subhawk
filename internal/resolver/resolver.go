@@ -20,12 +20,23 @@ type TakeoverInfo struct {
 }
 
 type DNSRecords struct {
-	A     []string
-	AAAA  []string
-	MX    []string
-	TXT   []string
-	NS    []string
-	CNAME string
+	A      []string
+	AAAA   []string
+	MX     []string
+	TXT    []string
+	NS     []string
+	CNAME  string
+	SOA    string
+	SRV    []string
+	CAA    []string
+	PTR    []string
+	DMARC  string
+	SPF    string
+	DNSKEY []string
+	DS     []string
+	TLSA   []string
+	NAPTR  []string
+	HTTPS  []string
 }
 
 type Result struct {

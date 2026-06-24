@@ -8,7 +8,7 @@ Fast subdomain enumeration tool written in Go. Combines passive sources, active 
 - **DNS zone transfer (AXFR)**: attempts zone transfer on all nameservers
 - **Active brute-force**: concurrent DNS resolution with custom resolvers and rate limiting
 - **Wildcard detection**: automatically detects and filters wildcard DNS responses
-- **Full DNS records**: A, AAAA, MX, TXT, NS per subdomain
+- **Full DNS records**: 17 record types — A, AAAA, CNAME, MX, TXT, NS, SOA, SRV, CAA, PTR, DMARC, SPF, DNSKEY, DS, TLSA, NAPTR, HTTPS
 - **Cloud detection**: identifies AWS, GCP, Azure, Cloudflare, Fastly, Akamai, and more
 - **HTTP probing**: status code, page title, server header
 - **Tech fingerprinting**: WordPress, Laravel, Django, Next.js, Nginx, Cloudflare, and 20+ more
@@ -48,6 +48,11 @@ subhawk -d example.com -a
 # Full recon: all features enabled
 subhawk -d example.com -w wordlists/common.txt -a -p -T --portscan --permutation --dns-records --axfr
 
+# Specific DNS record types
+subhawk -d example.com --dns-records MX,SPF,DMARC
+subhawk -d example.com --dns-records SRV,NAPTR
+subhawk -d example.com --dns-records CAA,TLSA,DNSKEY,DS
+
 # Export to Nuclei
 subhawk -d example.com -a -f nuclei -o targets.txt
 
@@ -84,7 +89,7 @@ subhawk -D domains.txt -a -p
 | `-p, --probe` | `false` | HTTP probe + tech fingerprinting |
 | `-T, --takeover` | `false` | Subdomain takeover detection |
 | `--portscan` | `false` | Scan 30 common ports on active subdomains |
-| `--dns-records` | `false` | Fetch full DNS records (A, AAAA, MX, TXT, NS) |
+| `--dns-records` | — | DNS record types to fetch, comma-separated (empty = all 17 types) |
 | `--permutation` | `false` | Generate and test permutations from found subdomains |
 | `--recursive` | `0` | Recursive enumeration depth (0 = disabled) |
 
@@ -133,6 +138,28 @@ subhawk -D domains.txt -a -p
 | SecurityTrails | DNS history | API key |
 | Shodan | Internet scanner | API key |
 | Censys | Certificate search | API key |
+
+## DNS record types
+
+| Type | Description | Use case |
+|------|-------------|----------|
+| `A` | IPv4 address | Host discovery |
+| `AAAA` | IPv6 address | IPv6 hosts |
+| `CNAME` | Canonical name | Takeover detection |
+| `MX` | Mail exchange | Email infrastructure |
+| `TXT` | Text records | SPF, DKIM, verification tokens |
+| `NS` | Nameservers | Zone delegation |
+| `SOA` | Start of authority | Zone serial, change tracking |
+| `SRV` | Service locator | Internal services (LDAP, SIP, Kerberos) |
+| `CAA` | CA authorization | Certificate policy misconfigurations |
+| `PTR` | Reverse DNS | Real hostname from IP |
+| `DMARC` | Email policy | Email spoofing posture |
+| `SPF` | Sender policy | Email spoofing posture |
+| `DNSKEY` | DNSSEC public key | DNSSEC validation |
+| `DS` | Delegation signer | DNSSEC chain |
+| `TLSA` | Certificate pinning | DANE validation |
+| `NAPTR` | Naming authority | VoIP/SIP infrastructure |
+| `HTTPS` | HTTPS/SVCB binding | HTTP/3, ECH support |
 
 ## Config file
 

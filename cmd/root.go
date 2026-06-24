@@ -48,7 +48,7 @@ var (
 	doTakeover    bool
 	doPerm        bool
 	doPortScan    bool
-	doDNSRecords  bool
+	dnsRecordTypes []string
 	doResume      bool
 	doAxfr        bool
 )
@@ -86,7 +86,7 @@ func init() {
 	rootCmd.Flags().BoolVarP(&doTakeover, "takeover", "T", false, "Subdomain takeover detection")
 	rootCmd.Flags().BoolVar(&doPerm, "permutation", false, "Generate permutations from found subdomains")
 	rootCmd.Flags().BoolVar(&doPortScan, "portscan", false, "Scan common ports on active subdomains")
-	rootCmd.Flags().BoolVar(&doDNSRecords, "dns-records", false, "Fetch full DNS records (A, AAAA, MX, TXT, NS)")
+	rootCmd.Flags().StringSliceVar(&dnsRecordTypes, "dns-records", nil, "Fetch DNS records: A,AAAA,CNAME,MX,TXT,NS (empty = all)")
 	rootCmd.Flags().IntVar(&recursiveDepth, "recursive", 0, "Recursive enumeration depth (0=disabled)")
 
 	// Filtering
@@ -320,8 +320,13 @@ func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, di
 	resolveWg.Wait()
 
 	// Full DNS records
-	if doDNSRecords && len(activeSubs) > 0 {
-		fmt.Printf("\n[*] Fetching full DNS records for %d subdomains...\n", len(activeSubs))
+	if len(dnsRecordTypes) > 0 || dnsRecordTypes != nil {
+		types := dnsrecords.ParseTypes(dnsRecordTypes)
+		label := "all"
+		if len(dnsRecordTypes) > 0 {
+			label = strings.Join(dnsRecordTypes, ",")
+		}
+		fmt.Printf("\n[*] Fetching DNS records [%s] for %d subdomains...\n", label, len(activeSubs))
 		var dnsWg sync.WaitGroup
 		dnsSem := make(chan struct{}, threads)
 		for i := range activeSubs {
@@ -330,11 +335,16 @@ func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, di
 			go func(idx int) {
 				defer dnsWg.Done()
 				defer func() { <-dnsSem }()
-				rec := dnsrecords.Lookup(activeSubs[idx].Subdomain, ns, tout)
+				rec := dnsrecords.Lookup(activeSubs[idx].Subdomain, ns, tout, types)
 				activeSubs[idx].DNS = &resolver.DNSRecords{
 					A: rec.A, AAAA: rec.AAAA,
 					MX: rec.MX, TXT: rec.TXT, NS: rec.NS,
-					CNAME: rec.CNAME,
+					CNAME: rec.CNAME, SOA: rec.SOA,
+					SRV: rec.SRV, CAA: rec.CAA, PTR: rec.PTR,
+					DMARC: rec.DMARC, SPF: rec.SPF,
+					DNSKEY: rec.DNSKEY, DS: rec.DS,
+					TLSA: rec.TLSA, NAPTR: rec.NAPTR,
+					HTTPS: rec.HTTPS,
 				}
 				writer.Write(activeSubs[idx])
 			}(i)
