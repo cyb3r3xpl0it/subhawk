@@ -6,11 +6,27 @@ import (
 	"time"
 )
 
+type HTTPInfo struct {
+	URL        string
+	StatusCode int
+	Title      string
+	Server     string
+}
+
+type TakeoverInfo struct {
+	Service     string
+	Fingerprint string
+}
+
 type Result struct {
-	Subdomain string
-	IPs       []string
-	CNAME     string
-	Active    bool
+	Subdomain  string
+	IPs        []string
+	CNAME      string
+	Active     bool
+	IsWildcard bool
+	Source     string
+	HTTP       *HTTPInfo
+	Takeover   *TakeoverInfo
 }
 
 var defaultResolvers = []string{
@@ -21,15 +37,26 @@ var defaultResolvers = []string{
 }
 
 type Resolver struct {
-	resolvers []string
-	timeout   time.Duration
+	resolvers    []string
+	timeout      time.Duration
+	wildcardIPs  map[string]bool
 }
 
 func New(resolvers []string, timeout time.Duration) *Resolver {
 	if len(resolvers) == 0 {
 		resolvers = defaultResolvers
 	}
-	return &Resolver{resolvers: resolvers, timeout: timeout}
+	return &Resolver{
+		resolvers:   resolvers,
+		timeout:     timeout,
+		wildcardIPs: map[string]bool{},
+	}
+}
+
+func (r *Resolver) SetWildcardIPs(ips []string) {
+	for _, ip := range ips {
+		r.wildcardIPs[ip] = true
+	}
 }
 
 func (r *Resolver) Resolve(subdomain string) Result {
@@ -51,6 +78,18 @@ func (r *Resolver) Resolve(subdomain string) Result {
 		if err == nil && len(addrs) > 0 {
 			result.IPs = addrs
 			result.Active = true
+
+			// Check if all IPs match wildcard
+			if len(r.wildcardIPs) > 0 {
+				wildcard := true
+				for _, ip := range addrs {
+					if !r.wildcardIPs[ip] {
+						wildcard = false
+						break
+					}
+				}
+				result.IsWildcard = wildcard
+			}
 
 			cname, cerr := resolver.LookupCNAME(ctx, subdomain)
 			if cerr == nil {
