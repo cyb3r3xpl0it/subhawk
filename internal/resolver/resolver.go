@@ -92,6 +92,32 @@ type DNSRecords struct {
 	HTTPS  []string
 }
 
+type ExposedFile struct {
+	Path       string
+	StatusCode int
+	Size       int64
+	URL        string
+}
+
+type BucketResult struct {
+	URL      string
+	Provider string
+	Name     string
+	Public   bool
+	Writable bool
+}
+
+type OpenRedirect struct {
+	URL   string
+	Param string
+}
+
+type DefaultCred struct {
+	Username string
+	Password string
+	Method   string
+}
+
 type Result struct {
 	Subdomain       string
 	IPs             []string
@@ -102,7 +128,14 @@ type Result struct {
 	Cloud           string
 	WAF             string
 	FaviconHash     string
+	RealIP          string
+	ScreenshotPath  string
 	OpenPorts       []int
+	VHosts          []string
+	ExposedFiles    []ExposedFile
+	Buckets         []BucketResult
+	OpenRedirects   []OpenRedirect
+	DefaultCreds    []DefaultCred
 	DNS             *DNSRecords
 	HTTP            *HTTPInfo
 	Takeover        *TakeoverInfo

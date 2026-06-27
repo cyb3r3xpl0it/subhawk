@@ -10,21 +10,26 @@ import (
 )
 
 type Stats struct {
-	mu         sync.Mutex
-	Total      int
-	Active     int
-	Wildcards  int
-	Takeovers  int
-	CORSIssues int
-	MissingHSTS int
-	SSLExpiring int  // < 30 days
-	SSLExpired  int
-	WAFDetected int
-	ByCloud     map[string]int
-	ByStatus    map[int]int
-	ByTech      map[string]int
-	AdminPanels int
-	JSSecrets   int
+	mu            sync.Mutex
+	Total         int
+	Active        int
+	Wildcards     int
+	Takeovers     int
+	CORSIssues    int
+	MissingHSTS   int
+	SSLExpiring   int
+	SSLExpired    int
+	WAFDetected   int
+	ByCloud       map[string]int
+	ByStatus      map[int]int
+	ByTech        map[string]int
+	AdminPanels   int
+	JSSecrets     int
+	ExposedFiles  int
+	PublicBuckets int
+	OpenRedirects int
+	DefaultCreds  int
+	VHostsFound   int
 }
 
 func New() *Stats {
@@ -82,6 +87,15 @@ func (s *Stats) Add(r resolver.Result) {
 	if r.JS != nil && len(r.JS.Secrets) > 0 {
 		s.JSSecrets += len(r.JS.Secrets)
 	}
+	s.ExposedFiles += len(r.ExposedFiles)
+	s.OpenRedirects += len(r.OpenRedirects)
+	s.DefaultCreds += len(r.DefaultCreds)
+	s.VHostsFound += len(r.VHosts)
+	for _, b := range r.Buckets {
+		if b.Public {
+			s.PublicBuckets++
+		}
+	}
 }
 
 func (s *Stats) Print() {
@@ -124,12 +138,17 @@ func (s *Stats) Print() {
 	fmt.Printf("%s\n  Security findings:\n", sep)
 	printFinding("Takeovers", s.Takeovers, "\033[31m")
 	printFinding("CORS vulnerable", s.CORSIssues, "\033[31m")
+	printFinding("Open redirects", s.OpenRedirects, "\033[33m")
+	printFinding("Default credentials", s.DefaultCreds, "\033[31m")
+	printFinding("Exposed files", s.ExposedFiles, "\033[31m")
+	printFinding("Public buckets", s.PublicBuckets, "\033[31m")
 	printFinding("Missing HSTS", s.MissingHSTS, "\033[33m")
 	printFinding("SSL expired", s.SSLExpired, "\033[31m")
 	printFinding("SSL expiring (<30d)", s.SSLExpiring, "\033[33m")
 	printFinding("WAF detected", s.WAFDetected, "\033[32m")
 	printFinding("Admin panels found", s.AdminPanels, "\033[33m")
 	printFinding("JS secrets detected", s.JSSecrets, "\033[31m")
+	printFinding("Virtual hosts found", s.VHostsFound, "\033[36m")
 	fmt.Println(sep)
 }
 

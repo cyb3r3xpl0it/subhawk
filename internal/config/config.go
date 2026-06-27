@@ -13,6 +13,11 @@ type APIKeys struct {
 	Shodan         string `yaml:"shodan"`
 	CensysID       string `yaml:"censys_id"`
 	CensysSecret   string `yaml:"censys_secret"`
+	Chaos          string `yaml:"chaos"`
+	FullHunt       string `yaml:"fullhunt"`
+	Bevigil        string `yaml:"bevigil"`
+	LeakIX         string `yaml:"leakix"`
+	GitHubToken    string `yaml:"github_token"`
 }
 
 type Config struct {
@@ -65,6 +70,11 @@ api_keys:
   shodan: ""
   censys_id: ""
   censys_secret: ""
+  chaos: ""
+  fullhunt: ""
+  bevigil: ""
+  leakix: ""
+  github_token: ""
 `
 	return os.WriteFile(path, []byte(template), 0600)
 }

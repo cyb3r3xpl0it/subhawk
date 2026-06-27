@@ -29,31 +29,38 @@ func (s *DB) Close() error { return s.db.Close() }
 
 func migrate(db *sql.DB) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS results (
-		id          INTEGER PRIMARY KEY AUTOINCREMENT,
-		domain      TEXT NOT NULL,
-		subdomain   TEXT NOT NULL,
-		ips         TEXT,
-		cname       TEXT,
-		active      BOOLEAN,
-		cloud       TEXT,
-		open_ports  TEXT,
-		waf         TEXT,
-		http_status INTEGER,
-		http_url    TEXT,
-		http_title  TEXT,
-		http_server TEXT,
-		tech        TEXT,
-		takeover    TEXT,
-		cors_vuln   BOOLEAN,
-		ssl_valid   BOOLEAN,
-		ssl_expiry  INTEGER,
-		favicon_hash TEXT,
-		asn         TEXT,
-		asn_org     TEXT,
-		country     TEXT,
-		admin_panels TEXT,
-		js_secrets  TEXT,
-		scan_time   TIMESTAMP,
+		id            INTEGER PRIMARY KEY AUTOINCREMENT,
+		domain        TEXT NOT NULL,
+		subdomain     TEXT NOT NULL,
+		ips           TEXT,
+		cname         TEXT,
+		active        BOOLEAN,
+		cloud         TEXT,
+		open_ports    TEXT,
+		waf           TEXT,
+		http_status   INTEGER,
+		http_url      TEXT,
+		http_title    TEXT,
+		http_server   TEXT,
+		tech          TEXT,
+		takeover      TEXT,
+		cors_vuln     BOOLEAN,
+		ssl_valid     BOOLEAN,
+		ssl_expiry    INTEGER,
+		favicon_hash  TEXT,
+		asn           TEXT,
+		asn_org       TEXT,
+		country       TEXT,
+		admin_panels  TEXT,
+		js_secrets    TEXT,
+		exposed_files TEXT,
+		buckets       TEXT,
+		open_redirects TEXT,
+		default_creds  BOOLEAN,
+		real_ip        TEXT,
+		vhosts         TEXT,
+		screenshot     TEXT,
+		scan_time     TIMESTAMP,
 		UNIQUE(domain, subdomain)
 	)`)
 	return err
@@ -113,18 +120,54 @@ func (s *DB) Save(domain string, r resolver.Result) error {
 		jsSecrets = strings.Join(r.JS.Secrets, "|")
 	}
 
+	exposedFiles := ""
+	if len(r.ExposedFiles) > 0 {
+		ef := make([]string, len(r.ExposedFiles))
+		for i, f := range r.ExposedFiles {
+			ef[i] = f.Path
+		}
+		exposedFiles = strings.Join(ef, ",")
+	}
+
+	bucketsStr := ""
+	for _, b := range r.Buckets {
+		if b.Public {
+			if bucketsStr != "" {
+				bucketsStr += ","
+			}
+			bucketsStr += b.URL
+		}
+	}
+
+	openRedirects := ""
+	if len(r.OpenRedirects) > 0 {
+		ors := make([]string, len(r.OpenRedirects))
+		for i, or_ := range r.OpenRedirects {
+			ors[i] = or_.URL
+		}
+		openRedirects = strings.Join(ors, ",")
+	}
+
+	hasCreds := len(r.DefaultCreds) > 0
+
+	vhosts := strings.Join(r.VHosts, ",")
+
 	_, err := s.db.Exec(`INSERT OR REPLACE INTO results
 		(domain, subdomain, ips, cname, active, cloud, open_ports, waf,
 		 http_status, http_url, http_title, http_server, tech,
 		 takeover, cors_vuln, ssl_valid, ssl_expiry, favicon_hash,
-		 asn, asn_org, country, admin_panels, js_secrets, scan_time)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 asn, asn_org, country, admin_panels, js_secrets,
+		 exposed_files, buckets, open_redirects, default_creds,
+		 real_ip, vhosts, screenshot, scan_time)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		domain, r.Subdomain,
 		strings.Join(r.IPs, ","), r.CNAME, r.Active, r.Cloud,
 		strings.Join(ports, ","), r.WAF,
 		httpStatus, httpURL, httpTitle, httpServer, tech,
 		takeover, corsVuln, sslValid, sslExpiry, r.FaviconHash,
 		asnStr, asnOrg, country, adminPanels, jsSecrets,
+		exposedFiles, bucketsStr, openRedirects, hasCreds,
+		r.RealIP, vhosts, r.ScreenshotPath,
 		time.Now(),
 	)
 	return err

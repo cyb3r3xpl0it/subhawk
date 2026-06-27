@@ -18,6 +18,7 @@ const (
 	FormatCSV    Format = "csv"
 	FormatNuclei Format = "nuclei"
 	FormatBurp   Format = "burp"
+	FormatSARIF  Format = "sarif"
 )
 
 const (
@@ -36,12 +37,67 @@ type burpEntry struct {
 	Protocol string `json:"protocol"`
 }
 
+// SARIF 2.1.0 structures
+type sarifLog struct {
+	Version string      `json:"version"`
+	Schema  string      `json:"$schema"`
+	Runs    []sarifRun  `json:"runs"`
+}
+
+type sarifRun struct {
+	Tool    sarifTool     `json:"tool"`
+	Results []sarifResult `json:"results"`
+}
+
+type sarifTool struct {
+	Driver sarifDriver `json:"driver"`
+}
+
+type sarifDriver struct {
+	Name           string      `json:"name"`
+	Version        string      `json:"version"`
+	InformationURI string      `json:"informationUri"`
+	Rules          []sarifRule `json:"rules"`
+}
+
+type sarifRule struct {
+	ID               string          `json:"id"`
+	Name             string          `json:"name"`
+	ShortDescription sarifMessage    `json:"shortDescription"`
+	HelpURI          string          `json:"helpUri,omitempty"`
+	Properties       map[string]any  `json:"properties,omitempty"`
+}
+
+type sarifResult struct {
+	RuleID    string         `json:"ruleId"`
+	Level     string         `json:"level"` // error, warning, note
+	Message   sarifMessage   `json:"message"`
+	Locations []sarifLocation `json:"locations,omitempty"`
+}
+
+type sarifLocation struct {
+	PhysicalLocation sarifPhysical `json:"physicalLocation"`
+}
+
+type sarifPhysical struct {
+	ArtifactLocation sarifArtifact `json:"artifactLocation"`
+}
+
+type sarifArtifact struct {
+	URI string `json:"uri"`
+}
+
+type sarifMessage struct {
+	Text string `json:"text"`
+}
+
 type Writer struct {
-	mu      sync.Mutex
-	format  Format
-	file    *os.File
-	noColor bool
-	burpBuf []burpEntry
+	mu       sync.Mutex
+	format   Format
+	file     *os.File
+	noColor  bool
+	burpBuf  []burpEntry
+	sarifBuf []sarifResult
 }
 
 func New(format Format, outputFile string, noColor bool) (*Writer, error) {
@@ -72,6 +128,36 @@ func (w *Writer) Close() {
 		}
 		data, _ := json.MarshalIndent(scope, "", "  ")
 		w.file.Write(data)
+	}
+
+	if w.format == FormatSARIF {
+		log := sarifLog{
+			Version: "2.1.0",
+			Schema:  "https://json.schemastore.org/sarif-2.1.0.json",
+			Runs: []sarifRun{{
+				Tool: sarifTool{Driver: sarifDriver{
+					Name:           "SubHawk",
+					Version:        "1.4.0",
+					InformationURI: "https://github.com/cyb3r3xpl0it/subhawk",
+					Rules: []sarifRule{
+						{ID: "SH001", Name: "SubdomainTakeover", ShortDescription: sarifMessage{Text: "Subdomain takeover vulnerability"}},
+						{ID: "SH002", Name: "CORSMisconfiguration", ShortDescription: sarifMessage{Text: "CORS misconfiguration detected"}},
+						{ID: "SH003", Name: "SSLIssue", ShortDescription: sarifMessage{Text: "SSL/TLS certificate issue"}},
+						{ID: "SH004", Name: "ExposedFile", ShortDescription: sarifMessage{Text: "Sensitive file exposed"}},
+						{ID: "SH005", Name: "OpenRedirect", ShortDescription: sarifMessage{Text: "Open redirect vulnerability"}},
+						{ID: "SH006", Name: "PublicBucket", ShortDescription: sarifMessage{Text: "Public cloud storage bucket"}},
+						{ID: "SH007", Name: "DefaultCredentials", ShortDescription: sarifMessage{Text: "Default credentials accepted"}},
+					},
+				}},
+				Results: w.sarifBuf,
+			}},
+		}
+		data, _ := json.MarshalIndent(log, "", "  ")
+		if w.file != nil {
+			w.file.Write(data)
+		} else {
+			fmt.Println(string(data))
+		}
 	}
 
 	if w.file != nil {
@@ -107,6 +193,9 @@ func (w *Writer) Write(r resolver.Result) {
 
 	case FormatBurp:
 		w.writeBurp(r)
+
+	case FormatSARIF:
+		w.writeSARIF(r)
 
 	default:
 		fmt.Println(w.formatText(r))
@@ -175,6 +264,73 @@ func (w *Writer) writeBurp(r resolver.Result) {
 		Host:     r.Subdomain,
 		Protocol: proto,
 	})
+}
+
+func (w *Writer) writeSARIF(r resolver.Result) {
+	uri := "https://" + r.Subdomain
+
+	if r.Takeover != nil {
+		w.sarifBuf = append(w.sarifBuf, sarifResult{
+			RuleID:  "SH001",
+			Level:   "error",
+			Message: sarifMessage{Text: fmt.Sprintf("Subdomain %s is vulnerable to takeover via %s", r.Subdomain, r.Takeover.Service)},
+			Locations: []sarifLocation{{PhysicalLocation: sarifPhysical{ArtifactLocation: sarifArtifact{URI: uri}}}},
+		})
+	}
+	if r.CORS != nil && r.CORS.Vulnerable {
+		w.sarifBuf = append(w.sarifBuf, sarifResult{
+			RuleID:  "SH002",
+			Level:   "warning",
+			Message: sarifMessage{Text: fmt.Sprintf("CORS misconfiguration on %s: allows arbitrary origin", r.Subdomain)},
+			Locations: []sarifLocation{{PhysicalLocation: sarifPhysical{ArtifactLocation: sarifArtifact{URI: uri}}}},
+		})
+	}
+	if r.TLS != nil && (!r.TLS.Valid || r.TLS.Expired) {
+		msg := fmt.Sprintf("SSL/TLS issue on %s", r.Subdomain)
+		if r.TLS.Expired {
+			msg = fmt.Sprintf("SSL certificate expired on %s", r.Subdomain)
+		}
+		w.sarifBuf = append(w.sarifBuf, sarifResult{
+			RuleID:  "SH003",
+			Level:   "warning",
+			Message: sarifMessage{Text: msg},
+			Locations: []sarifLocation{{PhysicalLocation: sarifPhysical{ArtifactLocation: sarifArtifact{URI: uri}}}},
+		})
+	}
+	for _, f := range r.ExposedFiles {
+		w.sarifBuf = append(w.sarifBuf, sarifResult{
+			RuleID:  "SH004",
+			Level:   "error",
+			Message: sarifMessage{Text: fmt.Sprintf("Exposed sensitive file %s on %s (HTTP %d)", f.Path, r.Subdomain, f.StatusCode)},
+			Locations: []sarifLocation{{PhysicalLocation: sarifPhysical{ArtifactLocation: sarifArtifact{URI: f.URL}}}},
+		})
+	}
+	for _, or_ := range r.OpenRedirects {
+		w.sarifBuf = append(w.sarifBuf, sarifResult{
+			RuleID:  "SH005",
+			Level:   "warning",
+			Message: sarifMessage{Text: fmt.Sprintf("Open redirect via parameter '%s' on %s", or_.Param, r.Subdomain)},
+			Locations: []sarifLocation{{PhysicalLocation: sarifPhysical{ArtifactLocation: sarifArtifact{URI: or_.URL}}}},
+		})
+	}
+	for _, b := range r.Buckets {
+		if b.Public {
+			w.sarifBuf = append(w.sarifBuf, sarifResult{
+				RuleID:  "SH006",
+				Level:   "error",
+				Message: sarifMessage{Text: fmt.Sprintf("Public %s bucket: %s (writable: %v)", b.Provider, b.URL, b.Writable)},
+				Locations: []sarifLocation{{PhysicalLocation: sarifPhysical{ArtifactLocation: sarifArtifact{URI: b.URL}}}},
+			})
+		}
+	}
+	for _, dc := range r.DefaultCreds {
+		w.sarifBuf = append(w.sarifBuf, sarifResult{
+			RuleID:  "SH007",
+			Level:   "error",
+			Message: sarifMessage{Text: fmt.Sprintf("Default credentials %s:%s accepted on %s", dc.Username, dc.Password, r.Subdomain)},
+			Locations: []sarifLocation{{PhysicalLocation: sarifPhysical{ArtifactLocation: sarifArtifact{URI: uri}}}},
+		})
+	}
 }
 
 func (w *Writer) formatText(r resolver.Result) string {
@@ -249,6 +405,35 @@ func (w *Writer) formatText(r resolver.Result) string {
 		if r.JS != nil && len(r.JS.Secrets) > 0 {
 			sb.WriteString(w.color(colorRed, fmt.Sprintf(" [secrets:%d]", len(r.JS.Secrets))))
 		}
+		if len(r.ExposedFiles) > 0 {
+			sb.WriteString(w.color(colorRed, fmt.Sprintf(" [exposed:%d]", len(r.ExposedFiles))))
+		}
+		if len(r.Buckets) > 0 {
+			pub := 0
+			for _, b := range r.Buckets {
+				if b.Public {
+					pub++
+				}
+			}
+			if pub > 0 {
+				sb.WriteString(w.color(colorRed, fmt.Sprintf(" [buckets:%d]", pub)))
+			}
+		}
+		if len(r.OpenRedirects) > 0 {
+			sb.WriteString(w.color(colorYellow, fmt.Sprintf(" [redirect:%d]", len(r.OpenRedirects))))
+		}
+		if len(r.DefaultCreds) > 0 {
+			sb.WriteString(w.color(colorRed, fmt.Sprintf(" [creds:%d]", len(r.DefaultCreds))))
+		}
+		if r.RealIP != "" {
+			sb.WriteString(w.color(colorMagenta, fmt.Sprintf(" [realip:%s]", r.RealIP)))
+		}
+		if len(r.VHosts) > 0 {
+			sb.WriteString(w.color(colorCyan, fmt.Sprintf(" [vhosts:%d]", len(r.VHosts))))
+		}
+		if r.ScreenshotPath != "" {
+			sb.WriteString(w.color(colorGray, fmt.Sprintf(" [screenshot]")))
+		}
 
 	default:
 		sb.WriteString(w.color(colorRed, "[-]"))
@@ -276,7 +461,7 @@ func Banner() {
  ___) | |_| | |_) |  _  | (_| |\ V  V /|   <
 |____/ \__,_|_.__/|_| |_|\__,_| \_/\_/ |_|\_\
 
-         Subdomain Enumeration Tool  v1.3
+         Subdomain Enumeration Tool  v1.4
 
 `)
 }
