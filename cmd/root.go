@@ -12,27 +12,34 @@ import (
 	"time"
 
 	"github.com/cyb3r3xpl0it/subhawk/internal/admindetect"
+	"github.com/cyb3r3xpl0it/subhawk/internal/apidiscover"
 	"github.com/cyb3r3xpl0it/subhawk/internal/asn"
 	"github.com/cyb3r3xpl0it/subhawk/internal/axfr"
+	"github.com/cyb3r3xpl0it/subhawk/internal/banner"
 	"github.com/cyb3r3xpl0it/subhawk/internal/buckets"
 	"github.com/cyb3r3xpl0it/subhawk/internal/cdnbypass"
+	"github.com/cyb3r3xpl0it/subhawk/internal/certcorrelate"
 	"github.com/cyb3r3xpl0it/subhawk/internal/checkpoint"
 	"github.com/cyb3r3xpl0it/subhawk/internal/cloud"
 	"github.com/cyb3r3xpl0it/subhawk/internal/config"
 	"github.com/cyb3r3xpl0it/subhawk/internal/cors"
 	"github.com/cyb3r3xpl0it/subhawk/internal/defaultcreds"
 	"github.com/cyb3r3xpl0it/subhawk/internal/dnsrecords"
+	"github.com/cyb3r3xpl0it/subhawk/internal/dork"
 	"github.com/cyb3r3xpl0it/subhawk/internal/emailscore"
 	"github.com/cyb3r3xpl0it/subhawk/internal/exposed"
 	"github.com/cyb3r3xpl0it/subhawk/internal/fastresolver"
 	"github.com/cyb3r3xpl0it/subhawk/internal/favicon"
 	"github.com/cyb3r3xpl0it/subhawk/internal/headers"
 	"github.com/cyb3r3xpl0it/subhawk/internal/jsscrape"
+	"github.com/cyb3r3xpl0it/subhawk/internal/monitor"
+	"github.com/cyb3r3xpl0it/subhawk/internal/neighbors"
 	"github.com/cyb3r3xpl0it/subhawk/internal/openredirect"
 	"github.com/cyb3r3xpl0it/subhawk/internal/output"
 	"github.com/cyb3r3xpl0it/subhawk/internal/permutation"
 	"github.com/cyb3r3xpl0it/subhawk/internal/portscan"
 	"github.com/cyb3r3xpl0it/subhawk/internal/probe"
+	"github.com/cyb3r3xpl0it/subhawk/internal/profile"
 	"github.com/cyb3r3xpl0it/subhawk/internal/ratelimit"
 	"github.com/cyb3r3xpl0it/subhawk/internal/report"
 	"github.com/cyb3r3xpl0it/subhawk/internal/resolver"
@@ -45,7 +52,9 @@ import (
 	"github.com/cyb3r3xpl0it/subhawk/internal/tui"
 	"github.com/cyb3r3xpl0it/subhawk/internal/vhostfuzz"
 	"github.com/cyb3r3xpl0it/subhawk/internal/waf"
+	"github.com/cyb3r3xpl0it/subhawk/internal/whois"
 	"github.com/cyb3r3xpl0it/subhawk/internal/wildcard"
+	"github.com/cyb3r3xpl0it/subhawk/internal/zonewalk"
 	"github.com/spf13/cobra"
 )
 
@@ -97,15 +106,25 @@ var (
 	doEmailScore      bool
 	doSummary         bool
 	doTUI             bool
-	doFastResolve     bool
+	doFastResolve       bool
 	doValidateResolvers bool
-	doVHost           bool
-	doExposed         bool
-	doBuckets         bool
-	doOpenRedirect    bool
-	doDefaultCreds    bool
-	doScreenshot      bool
-	doCDNBypass       bool
+	doVHost             bool
+	doExposed           bool
+	doBuckets           bool
+	doOpenRedirect      bool
+	doDefaultCreds      bool
+	doScreenshot        bool
+	doCDNBypass         bool
+	doBanner            bool
+	doAPIDiscover       bool
+	doWhois             bool
+	doZoneWalk          bool
+	doCertCorrelate     bool
+	doNeighbors         bool
+	doDork              bool
+	profileName         string
+	watchInterval       string
+	stdinMode           bool
 )
 
 var rootCmd = &cobra.Command{
@@ -132,7 +151,7 @@ func init() {
 
 	// Output
 	rootCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output file")
-	rootCmd.Flags().StringVarP(&outputFmt, "format", "f", "text", "Output format: text, json, csv, nuclei, burp, sarif")
+	rootCmd.Flags().StringVarP(&outputFmt, "format", "f", "text", "Output format: text, json, jsonl, csv, nuclei, burp, sarif")
 	rootCmd.Flags().BoolVar(&noColor, "no-color", false, "Disable color output")
 	rootCmd.Flags().BoolVarP(&activeOnly, "active", "a", false, "Show only active subdomains")
 	rootCmd.Flags().StringVar(&dbPath, "db", "", "Save results to SQLite database (e.g. results.db)")
@@ -179,6 +198,18 @@ func init() {
 	rootCmd.Flags().BoolVar(&doFastResolve, "fast-resolve", false, "Use raw UDP resolver for higher throughput (massdns-style)")
 	rootCmd.Flags().BoolVar(&doValidateResolvers, "validate-resolvers", false, "Validate resolvers before scanning")
 
+	// v1.5.0 — extended analysis
+	rootCmd.Flags().BoolVar(&doBanner, "banner", false, "TCP banner grabbing on open ports")
+	rootCmd.Flags().BoolVar(&doAPIDiscover, "api-discover", false, "Discover GraphQL, Swagger/OpenAPI, gRPC, WebSocket endpoints")
+	rootCmd.Flags().BoolVar(&doWhois, "whois", false, "WHOIS lookup for the root domain")
+	rootCmd.Flags().BoolVar(&doZoneWalk, "zone-walk", false, "DNSSEC zone walking via NSEC chain")
+	rootCmd.Flags().BoolVar(&doCertCorrelate, "cert-correlate", false, "Find related domains via TLS certificate correlation")
+	rootCmd.Flags().BoolVar(&doNeighbors, "neighbors", false, "Reverse DNS scan of /24 subnet for each active IP")
+	rootCmd.Flags().BoolVar(&doDork, "dork", false, "Search engine dorking (Google/Bing site: dork)")
+	rootCmd.Flags().StringVar(&profileName, "profile", "", "Preset profile: quick, stealth, osint, bug-bounty, full")
+	rootCmd.Flags().StringVar(&watchInterval, "watch", "", "Watch mode: rescan on interval (e.g. 30m, 1h)")
+	rootCmd.Flags().BoolVar(&stdinMode, "stdin", false, "Read subdomains from stdin instead of enumeration")
+
 	// Summary & UI
 	rootCmd.Flags().BoolVar(&doSummary, "summary", false, "Print summary report at end of scan")
 	rootCmd.Flags().BoolVar(&doTUI, "tui", false, "Interactive TUI mode")
@@ -186,6 +217,14 @@ func init() {
 	// State
 	rootCmd.Flags().StringVarP(&configFile, "config", "c", "", "Config file (default ~/.config/subhawk/config.yaml)")
 	rootCmd.Flags().BoolVar(&doResume, "resume", false, "Resume previous scan from checkpoint")
+
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "profiles",
+		Short: "List available scan profiles",
+		Run: func(cmd *cobra.Command, args []string) {
+			profile.List()
+		},
+	})
 
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "init-config",
@@ -202,8 +241,94 @@ func init() {
 }
 
 func run(cmd *cobra.Command, args []string) error {
-	if domain == "" && domainsFile == "" {
-		return fmt.Errorf("--domain or --domains-file is required")
+	// Apply profile settings before flag validation
+	if profileName != "" {
+		p, err := profile.Apply(profileName)
+		if err != nil {
+			return err
+		}
+		if p.DoAxfr {
+			doAxfr = true
+		}
+		if p.DoDork {
+			doDork = true
+		}
+		if p.DoZoneWalk {
+			doZoneWalk = true
+		}
+		if p.DoProbe {
+			doProbe = true
+		}
+		if p.DoTakeover {
+			doTakeover = true
+		}
+		if p.DoPerm {
+			doPerm = true
+		}
+		if p.DoPortScan {
+			doPortScan = true
+		}
+		if p.DoHeaders {
+			doHeaders = true
+		}
+		if p.DoCORS {
+			doCORS = true
+		}
+		if p.DoSSL {
+			doSSL = true
+		}
+		if p.DoWAF {
+			doWAF = true
+		}
+		if p.DoFavicon {
+			doFavicon = true
+		}
+		if p.DoASN {
+			doASN = true
+		}
+		if p.DoJS {
+			doJS = true
+		}
+		if p.DoAdmin {
+			doAdmin = true
+		}
+		if p.DoExposed {
+			doExposed = true
+		}
+		if p.DoBuckets {
+			doBuckets = true
+		}
+		if p.DoOpenRedirect {
+			doOpenRedirect = true
+		}
+		if p.DoDefaultCreds {
+			doDefaultCreds = true
+		}
+		if p.DoCDNBypass {
+			doCDNBypass = true
+		}
+		if p.DoBanner {
+			doBanner = true
+		}
+		if p.DoAPIDiscover {
+			doAPIDiscover = true
+		}
+		if p.DoWhois {
+			doWhois = true
+		}
+		if p.DoCertCorr {
+			doCertCorrelate = true
+		}
+		if p.DoNeighbors {
+			doNeighbors = true
+		}
+		if p.DoSummary {
+			doSummary = true
+		}
+	}
+
+	if domain == "" && domainsFile == "" && !stdinMode {
+		return fmt.Errorf("--domain, --domains-file, or --stdin is required")
 	}
 
 	var tuiProg *tui.Program
@@ -225,6 +350,17 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// Build domain list
 	var domains []string
+	if stdinMode {
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			if d := strings.TrimSpace(scanner.Text()); d != "" {
+				domains = append(domains, d)
+			}
+		}
+		if len(domains) == 0 {
+			return fmt.Errorf("no domains received from stdin")
+		}
+	}
 	if domain != "" {
 		domains = append(domains, domain)
 	}
@@ -302,7 +438,94 @@ func run(cmd *cobra.Command, args []string) error {
 		GitHubToken:       cfg.APIKeys.GitHubToken,
 	}
 
+	// WHOIS lookup per domain
+	if doWhois {
+		for _, d := range domains {
+			info := whois.Lookup(d, time.Duration(timeout)*time.Second*3)
+			if info != nil {
+				fmt.Printf("\n[*] WHOIS %s\n", d)
+				if info.Registrar != "" {
+					fmt.Printf("    Registrar  : %s\n", info.Registrar)
+				}
+				if info.CreatedAt != "" {
+					fmt.Printf("    Created    : %s\n", info.CreatedAt)
+				}
+				if info.ExpiresAt != "" {
+					fmt.Printf("    Expires    : %s\n", info.ExpiresAt)
+				}
+				if info.DNSSEC != "" {
+					fmt.Printf("    DNSSEC     : %s\n", info.DNSSEC)
+				}
+				if len(info.NameServers) > 0 {
+					fmt.Printf("    Nameservers: %s\n", strings.Join(info.NameServers, ", "))
+				}
+				if len(info.Emails) > 0 {
+					fmt.Printf("    Emails     : %s\n", strings.Join(info.Emails, ", "))
+				}
+			}
+		}
+	}
+
+	// Zone walking
+	if doZoneWalk {
+		ns := "8.8.8.8:53"
+		if len(resolvers) > 0 {
+			ns = resolvers[0]
+		}
+		for _, d := range domains {
+			tout := time.Duration(timeout) * time.Second
+			walked := zonewalk.Walk(d, ns, tout)
+			if len(walked) > 0 {
+				fmt.Printf("[!] NSEC zone walk: %d subdomains found for %s\n", len(walked), d)
+				for _, s := range walked {
+					fmt.Printf("    %s\n", s)
+				}
+			} else {
+				isNSEC3, detail := zonewalk.DetectNSEC3(d, ns, tout)
+				if isNSEC3 {
+					fmt.Printf("[*] Zone walk: %s uses %s (cannot be walked)\n", d, detail)
+				} else {
+					fmt.Printf("[*] Zone walk: %s is not DNSSEC-signed or blocks walking\n", d)
+				}
+			}
+		}
+	}
+
+	// Google/Bing dorking (add found subs to sources for resolution)
+	var dorkSubs []string
+	if doDork {
+		for _, d := range domains {
+			found := dork.Dork(d)
+			fmt.Printf("[*] Dork: %d subdomains found for %s\n", len(found), d)
+			dorkSubs = append(dorkSubs, found...)
+		}
+	}
+	_ = dorkSubs
+
 	var allResults []resolver.Result
+
+	// Watch mode
+	if watchInterval != "" {
+		interval, err := time.ParseDuration(watchInterval)
+		if err != nil {
+			return fmt.Errorf("invalid --watch duration %q: %w", watchInterval, err)
+		}
+		monitor.Watch(interval, func() []string {
+			var subs []string
+			for _, d := range domains {
+				results, _ := enumerate(d, srcOpts, writer, db, stats, tuiProg, diffSet, excludePatterns, 0)
+				for _, r := range results {
+					subs = append(subs, r.Subdomain)
+				}
+			}
+			return subs
+		}, func(newSubs []string) {
+			for _, s := range newSubs {
+				fmt.Printf("[NEW] %s\n", s)
+			}
+		})
+		return nil
+	}
 
 	for _, d := range domains {
 		results, err := enumerate(d, srcOpts, writer, db, stats, tuiProg, diffSet, excludePatterns, 0)
@@ -828,6 +1051,97 @@ func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, db
 				}
 			}
 		})
+	}
+
+	// Banner grabbing
+	if doBanner && len(activeSubs) > 0 {
+		logf("[*] Banner grabbing for %d subdomains...", len(activeSubs))
+		if tuiProg != nil {
+			tuiProg.SetPhase("Banner grab")
+		}
+		parallel(len(activeSubs), 10, func(idx int) {
+			if len(activeSubs[idx].OpenPorts) == 0 {
+				return
+			}
+			banners := banner.GrabAll(activeSubs[idx].Subdomain, activeSubs[idx].OpenPorts, tout)
+			for _, b := range banners {
+				activeSubs[idx].Banners = append(activeSubs[idx].Banners,
+					resolver.BannerInfo{Port: b.Port, Service: b.Service, Raw: b.Raw})
+			}
+		})
+	}
+
+	// API discovery
+	if doAPIDiscover && len(activeSubs) > 0 {
+		logf("[*] API discovery for %d subdomains...", len(activeSubs))
+		if tuiProg != nil {
+			tuiProg.SetPhase("API discovery")
+		}
+		parallel(len(activeSubs), 10, func(idx int) {
+			res := apidiscover.Discover(activeSubs[idx].Subdomain, tout*2)
+			if res == nil {
+				return
+			}
+			apiRes := &resolver.APIResult{
+				HasGraphQL:   res.HasGraphQL,
+				HasSwagger:   res.HasSwagger,
+				HasGRPC:      res.HasGRPC,
+				HasWebSocket: res.HasWebSocket,
+			}
+			for _, ep := range res.Endpoints {
+				apiRes.Endpoints = append(apiRes.Endpoints,
+					resolver.APIEndpoint{URL: ep.URL, Type: ep.Type, Details: ep.Details})
+			}
+			activeSubs[idx].APIs = apiRes
+		})
+	}
+
+	// TLS certificate correlation
+	if doCertCorrelate && len(activeSubs) > 0 {
+		logf("[*] Certificate correlation for %d subdomains...", len(activeSubs))
+		if tuiProg != nil {
+			tuiProg.SetPhase("Cert correlation")
+		}
+		parallel(len(activeSubs), 5, func(idx int) {
+			res := certcorrelate.Find(activeSubs[idx].Subdomain, tout*2)
+			if res == nil {
+				return
+			}
+			activeSubs[idx].CertCorrelate = &resolver.CertInfo{
+				RelatedDomains: res.RelatedDomains,
+				CertCN:         res.CertCN,
+				CertIssuer:     res.CertIssuer,
+				Fingerprint:    res.Fingerprint,
+			}
+		})
+	}
+
+	// Neighbor /24 scan
+	if doNeighbors && len(activeSubs) > 0 {
+		logf("[*] Neighbor scan for active IPs...")
+		if tuiProg != nil {
+			tuiProg.SetPhase("Neighbor scan")
+		}
+		scannedSubnets := map[string][]neighbors.Host{}
+		for i := range activeSubs {
+			if len(activeSubs[i].IPs) == 0 {
+				continue
+			}
+			ip := activeSubs[i].IPs[0]
+			parts := strings.Split(ip, ".")
+			if len(parts) != 4 {
+				continue
+			}
+			subnet := strings.Join(parts[:3], ".")
+			if _, already := scannedSubnets[subnet]; !already {
+				hosts := neighbors.Scan(ip, tout)
+				scannedSubnets[subnet] = hosts
+			}
+			for _, h := range scannedSubnets[subnet] {
+				activeSubs[i].Neighbors = append(activeSubs[i].Neighbors,
+					resolver.NeighborHost{IP: h.IP, Hostnames: h.Hostnames})
+			}
+		}
 	}
 
 	// CDN bypass

@@ -41,13 +41,26 @@ Fast subdomain enumeration and security analysis tool written in Go. Combines pa
 - **CDN real IP bypass**: find the real IP behind Cloudflare/CDN via SPF records, MX, historical DNS, and common bypass subdomains (`--cdn-bypass`)
 - **Email security score**: SPF, DMARC, DKIM score (0-100, grade A-F)
 
+### v1.5.0 — Intelligence & Workflow
+- **TCP banner grabbing**: identify services by reading raw TCP banners on open ports (`--banner`)
+- **API discovery**: detect GraphQL introspection, Swagger/OpenAPI docs, WebSocket, gRPC endpoints (`--api-discover`)
+- **WHOIS lookup**: registrar, creation date, expiry, DNSSEC status, and email contacts (`--whois`)
+- **DNSSEC zone walking**: enumerate subdomains via NSEC chain walking; detect NSEC3 (`--zone-walk`)
+- **TLS cert correlation**: find related domains sharing the same certificate via crt.sh (`--cert-correlate`)
+- **IP neighbor scan**: reverse DNS on all 254 IPs in each active /24 subnet (`--neighbors`)
+- **Search engine dorking**: Google and Bing `site:` dork for additional subdomains (`--dork`)
+- **Scan profiles**: preset flag combinations — `quick`, `stealth`, `osint`, `bug-bounty`, `full` (`--profile`)
+- **Watch mode**: rescan on interval, alert on new subdomains (`--watch 30m`)
+- **Stdin support**: pipe subdomains from other tools (`--stdin`)
+- **JSONL format**: streaming JSON lines output, one object per line (`-f jsonl`)
+
 ### Output & Reporting
 - **Summary report**: aggregated findings — cloud breakdown, HTTP status codes, tech stack, security issues
 - **HTML report**: standalone self-contained HTML report with dark theme and filterable table (`--report`)
 - **SQLite storage**: save all results to a local database with `--db results.db`
 - **SARIF output**: GitHub Actions security tab compatible (`-f sarif`)
 - **Interactive TUI**: real-time progress display with counters and live findings
-- **Output formats**: colored text, JSON, CSV, Nuclei, Burp Suite scope, SARIF
+- **Output formats**: colored text, JSON, JSONL, CSV, Nuclei, Burp Suite scope, SARIF
 
 ### Workflow
 - **Resume**: saves checkpoint and continues interrupted scans
@@ -70,6 +83,25 @@ go install github.com/cyb3r3xpl0it/subhawk@latest
 ```
 
 > **Screenshots** (`--screenshot`) require Google Chrome or Chromium installed on the system.
+
+## Profiles
+
+```bash
+# List available profiles
+subhawk profiles
+
+# Bug bounty recon (active + full security audit)
+subhawk -d example.com --profile bug-bounty -w wordlists/common.txt
+
+# OSINT only (passive + WHOIS + cert correlation + dorking)
+subhawk -d example.com --profile osint
+
+# Stealth (passive sources only, low noise)
+subhawk -d example.com --profile stealth
+
+# Everything enabled
+subhawk -d example.com --profile full -w wordlists/common.txt
+```
 
 ## Quick start
 
@@ -118,6 +150,18 @@ subhawk -d example.com --diff previous_results.json
 
 # Resume an interrupted scan
 subhawk -d example.com --resume
+```
+
+```bash
+# v1.5.0 — new features
+subhawk -d example.com --banner --api-discover          # Banner grabbing + API discovery
+subhawk -d example.com --whois --zone-walk              # WHOIS + DNSSEC zone walk
+subhawk -d example.com --cert-correlate --neighbors     # Cert correlation + /24 neighbor scan
+subhawk -d example.com --dork                           # Google/Bing dorking
+subhawk -d example.com --profile bug-bounty -w wordlists/common.txt  # Profile preset
+subhawk -d example.com --watch 30m                      # Watch mode (rescan every 30m)
+echo "example.com" | subhawk --stdin -p                 # Stdin support
+subhawk -d example.com -f jsonl -o out.jsonl            # Streaming JSONL output
 ```
 
 ## Flags
@@ -175,6 +219,20 @@ subhawk -d example.com --resume
 | `--email-score` | `false` | Calculate email security score (SPF/DMARC/DKIM) |
 | `--screenshot` | `false` | Take screenshots (requires Chrome/Chromium) |
 | `--screenshot-dir` | `screenshots` | Directory to save screenshots |
+| `--banner` | `false` | TCP banner grabbing on open ports (requires `--portscan`) |
+| `--api-discover` | `false` | Discover GraphQL, Swagger/OpenAPI, gRPC, WebSocket endpoints |
+| `--whois` | `false` | WHOIS lookup for the root domain |
+| `--zone-walk` | `false` | DNSSEC zone walking via NSEC chain |
+| `--cert-correlate` | `false` | Find related domains via TLS certificate correlation (crt.sh) |
+| `--neighbors` | `false` | Reverse DNS scan of /24 subnet for each active IP |
+| `--dork` | `false` | Search engine dorking (Google + Bing `site:` dork) |
+
+### Profiles & Workflow
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--profile` | — | Preset profile: `quick`, `stealth`, `osint`, `bug-bounty`, `full` |
+| `--watch` | — | Rescan on interval (e.g. `30m`, `1h`), alert on new subdomains |
+| `--stdin` | `false` | Read domains from stdin instead of `--domain` |
 
 ### Filtering
 | Flag | Description |
@@ -188,7 +246,7 @@ subhawk -d example.com --resume
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-o, --output` | — | Output file |
-| `-f, --format` | `text` | Format: `text`, `json`, `csv`, `nuclei`, `burp`, `sarif` |
+| `-f, --format` | `text` | Format: `text`, `json`, `jsonl`, `csv`, `nuclei`, `burp`, `sarif` |
 | `--db` | — | Save results to SQLite database |
 | `--report` | — | Generate standalone HTML report |
 | `--no-color` | `false` | Disable colored output |

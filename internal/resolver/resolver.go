@@ -118,6 +118,46 @@ type DefaultCred struct {
 	Method   string
 }
 
+type BannerInfo struct {
+	Port    int
+	Service string
+	Raw     string
+}
+
+type APIEndpoint struct {
+	URL     string
+	Type    string
+	Details string
+}
+
+type APIResult struct {
+	Endpoints    []APIEndpoint
+	HasGraphQL   bool
+	HasSwagger   bool
+	HasGRPC      bool
+	HasWebSocket bool
+}
+
+type WHOISInfo struct {
+	Registrar   string
+	CreatedAt   string
+	ExpiresAt   string
+	DNSSEC      string
+	Emails      []string
+}
+
+type NeighborHost struct {
+	IP        string
+	Hostnames []string
+}
+
+type CertInfo struct {
+	RelatedDomains []string
+	CertCN         string
+	CertIssuer     string
+	Fingerprint    string
+}
+
 type Result struct {
 	Subdomain       string
 	IPs             []string
@@ -136,6 +176,9 @@ type Result struct {
 	Buckets         []BucketResult
 	OpenRedirects   []OpenRedirect
 	DefaultCreds    []DefaultCred
+	Banners         []BannerInfo
+	ZoneWalked      []string
+	NSECInfo        string
 	DNS             *DNSRecords
 	HTTP            *HTTPInfo
 	Takeover        *TakeoverInfo
@@ -145,6 +188,10 @@ type Result struct {
 	ASN             *ASNInfo
 	AdminPanels     []AdminPanel
 	JS              *JSInfo
+	APIs            *APIResult
+	WHOIS           *WHOISInfo
+	CertCorrelate   *CertInfo
+	Neighbors       []NeighborHost
 }
 
 var defaultResolvers = []string{

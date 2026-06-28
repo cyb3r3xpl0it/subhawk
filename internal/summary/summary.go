@@ -10,26 +10,31 @@ import (
 )
 
 type Stats struct {
-	mu            sync.Mutex
-	Total         int
-	Active        int
-	Wildcards     int
-	Takeovers     int
-	CORSIssues    int
-	MissingHSTS   int
-	SSLExpiring   int
-	SSLExpired    int
-	WAFDetected   int
-	ByCloud       map[string]int
-	ByStatus      map[int]int
-	ByTech        map[string]int
-	AdminPanels   int
-	JSSecrets     int
-	ExposedFiles  int
-	PublicBuckets int
-	OpenRedirects int
-	DefaultCreds  int
-	VHostsFound   int
+	mu              sync.Mutex
+	Total           int
+	Active          int
+	Wildcards       int
+	Takeovers       int
+	CORSIssues      int
+	MissingHSTS     int
+	SSLExpiring     int
+	SSLExpired      int
+	WAFDetected     int
+	ByCloud         map[string]int
+	ByStatus        map[int]int
+	ByTech          map[string]int
+	AdminPanels     int
+	JSSecrets       int
+	ExposedFiles    int
+	PublicBuckets   int
+	OpenRedirects   int
+	DefaultCreds    int
+	VHostsFound     int
+	GraphQLFound    int
+	SwaggerFound    int
+	BannersFound    int
+	CertRelated     int
+	NeighborsFound  int
 }
 
 func New() *Stats {
@@ -91,10 +96,23 @@ func (s *Stats) Add(r resolver.Result) {
 	s.OpenRedirects += len(r.OpenRedirects)
 	s.DefaultCreds += len(r.DefaultCreds)
 	s.VHostsFound += len(r.VHosts)
+	s.BannersFound += len(r.Banners)
+	s.NeighborsFound += len(r.Neighbors)
 	for _, b := range r.Buckets {
 		if b.Public {
 			s.PublicBuckets++
 		}
+	}
+	if r.APIs != nil {
+		if r.APIs.HasGraphQL {
+			s.GraphQLFound++
+		}
+		if r.APIs.HasSwagger {
+			s.SwaggerFound++
+		}
+	}
+	if r.CertCorrelate != nil {
+		s.CertRelated += len(r.CertCorrelate.RelatedDomains)
 	}
 }
 
@@ -149,6 +167,11 @@ func (s *Stats) Print() {
 	printFinding("Admin panels found", s.AdminPanels, "\033[33m")
 	printFinding("JS secrets detected", s.JSSecrets, "\033[31m")
 	printFinding("Virtual hosts found", s.VHostsFound, "\033[36m")
+	printFinding("GraphQL endpoints", s.GraphQLFound, "\033[33m")
+	printFinding("Swagger/OpenAPI found", s.SwaggerFound, "\033[33m")
+	printFinding("Banners grabbed", s.BannersFound, "\033[36m")
+	printFinding("Cert-related domains", s.CertRelated, "\033[36m")
+	printFinding("Neighbors found", s.NeighborsFound, "\033[36m")
 	fmt.Println(sep)
 }
 

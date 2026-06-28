@@ -15,6 +15,7 @@ type Format string
 const (
 	FormatText   Format = "text"
 	FormatJSON   Format = "json"
+	FormatJSONL  Format = "jsonl"
 	FormatCSV    Format = "csv"
 	FormatNuclei Format = "nuclei"
 	FormatBurp   Format = "burp"
@@ -183,6 +184,14 @@ func (w *Writer) Write(r resolver.Result) {
 		fmt.Println(line)
 		if w.file != nil {
 			fmt.Fprintln(w.file, line)
+		}
+
+	case FormatJSONL:
+		// One JSON object per line — streaming-friendly
+		data, _ := json.Marshal(r)
+		fmt.Println(string(data))
+		if w.file != nil {
+			fmt.Fprintln(w.file, string(data))
 		}
 
 	case FormatCSV:
