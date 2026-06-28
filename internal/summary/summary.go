@@ -35,6 +35,15 @@ type Stats struct {
 	BannersFound    int
 	CertRelated     int
 	NeighborsFound  int
+	InternetDBCVEs  int
+	MaliciousIPs    int
+	CookieIssues    int
+	MixedContent    int
+	JWTsFound       int
+	SSRFFound       int
+	Log4ShellFound  int
+	NucleiFindings  int
+	DSStoreFound    int
 }
 
 func New() *Stats {
@@ -114,6 +123,27 @@ func (s *Stats) Add(r resolver.Result) {
 	if r.CertCorrelate != nil {
 		s.CertRelated += len(r.CertCorrelate.RelatedDomains)
 	}
+	if r.InternetDB != nil {
+		s.InternetDBCVEs += len(r.InternetDB.CVEs)
+	}
+	if r.GreyNoise != nil && r.GreyNoise.Classification == "malicious" {
+		s.MaliciousIPs++
+	}
+	if r.Cookies != nil {
+		s.CookieIssues += len(r.Cookies.Issues)
+	}
+	s.MixedContent += len(r.MixedContent)
+	s.JWTsFound += len(r.JWTs)
+	s.SSRFFound += len(r.SSRFParams)
+	if r.Log4ShellVuln {
+		s.Log4ShellFound++
+	}
+	if r.NucleiFindings != nil {
+		s.NucleiFindings += len(r.NucleiFindings.Findings)
+	}
+	if len(r.DSStoreFiles) > 0 {
+		s.DSStoreFound++
+	}
 }
 
 func (s *Stats) Print() {
@@ -172,6 +202,15 @@ func (s *Stats) Print() {
 	printFinding("Banners grabbed", s.BannersFound, "\033[36m")
 	printFinding("Cert-related domains", s.CertRelated, "\033[36m")
 	printFinding("Neighbors found", s.NeighborsFound, "\033[36m")
+	printFinding("InternetDB CVEs", s.InternetDBCVEs, "\033[31m")
+	printFinding("Malicious IPs (GreyNoise)", s.MaliciousIPs, "\033[31m")
+	printFinding("Cookie issues", s.CookieIssues, "\033[33m")
+	printFinding("Mixed content", s.MixedContent, "\033[33m")
+	printFinding("JWT tokens found", s.JWTsFound, "\033[33m")
+	printFinding("SSRF params found", s.SSRFFound, "\033[31m")
+	printFinding("Log4Shell detections", s.Log4ShellFound, "\033[31m")
+	printFinding("Nuclei findings", s.NucleiFindings, "\033[31m")
+	printFinding(".DS_Store exposed", s.DSStoreFound, "\033[31m")
 	fmt.Println(sep)
 }
 

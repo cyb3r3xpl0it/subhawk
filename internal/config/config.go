@@ -18,6 +18,7 @@ type APIKeys struct {
 	Bevigil        string `yaml:"bevigil"`
 	LeakIX         string `yaml:"leakix"`
 	GitHubToken    string `yaml:"github_token"`
+	AbuseIPDB      string `yaml:"abuseipdb"`
 }
 
 type Config struct {
@@ -75,6 +76,7 @@ api_keys:
   bevigil: ""
   leakix: ""
   github_token: ""
+  abuseipdb: ""
 `
 	return os.WriteFile(path, []byte(template), 0600)
 }

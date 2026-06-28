@@ -5,15 +5,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/cyb3r3xpl0it/subhawk/internal/abuseipdb"
 	"github.com/cyb3r3xpl0it/subhawk/internal/admindetect"
 	"github.com/cyb3r3xpl0it/subhawk/internal/apidiscover"
 	"github.com/cyb3r3xpl0it/subhawk/internal/asn"
+	"github.com/cyb3r3xpl0it/subhawk/internal/asncidr"
 	"github.com/cyb3r3xpl0it/subhawk/internal/axfr"
 	"github.com/cyb3r3xpl0it/subhawk/internal/banner"
 	"github.com/cyb3r3xpl0it/subhawk/internal/buckets"
@@ -22,20 +26,30 @@ import (
 	"github.com/cyb3r3xpl0it/subhawk/internal/checkpoint"
 	"github.com/cyb3r3xpl0it/subhawk/internal/cloud"
 	"github.com/cyb3r3xpl0it/subhawk/internal/config"
+	"github.com/cyb3r3xpl0it/subhawk/internal/cookiecheck"
 	"github.com/cyb3r3xpl0it/subhawk/internal/cors"
 	"github.com/cyb3r3xpl0it/subhawk/internal/defaultcreds"
+	"github.com/cyb3r3xpl0it/subhawk/internal/dnshistory"
 	"github.com/cyb3r3xpl0it/subhawk/internal/dnsrecords"
 	"github.com/cyb3r3xpl0it/subhawk/internal/dork"
+	"github.com/cyb3r3xpl0it/subhawk/internal/dsstore"
 	"github.com/cyb3r3xpl0it/subhawk/internal/emailscore"
 	"github.com/cyb3r3xpl0it/subhawk/internal/exposed"
 	"github.com/cyb3r3xpl0it/subhawk/internal/fastresolver"
 	"github.com/cyb3r3xpl0it/subhawk/internal/favicon"
+	"github.com/cyb3r3xpl0it/subhawk/internal/greynoise"
 	"github.com/cyb3r3xpl0it/subhawk/internal/headers"
+	"github.com/cyb3r3xpl0it/subhawk/internal/internetdb"
 	"github.com/cyb3r3xpl0it/subhawk/internal/jsscrape"
+	"github.com/cyb3r3xpl0it/subhawk/internal/jwtcheck"
+	"github.com/cyb3r3xpl0it/subhawk/internal/log4shell"
+	"github.com/cyb3r3xpl0it/subhawk/internal/mixedcontent"
 	"github.com/cyb3r3xpl0it/subhawk/internal/monitor"
 	"github.com/cyb3r3xpl0it/subhawk/internal/neighbors"
+	"github.com/cyb3r3xpl0it/subhawk/internal/nucleirun"
 	"github.com/cyb3r3xpl0it/subhawk/internal/openredirect"
 	"github.com/cyb3r3xpl0it/subhawk/internal/output"
+	"github.com/cyb3r3xpl0it/subhawk/internal/pathdisc"
 	"github.com/cyb3r3xpl0it/subhawk/internal/permutation"
 	"github.com/cyb3r3xpl0it/subhawk/internal/portscan"
 	"github.com/cyb3r3xpl0it/subhawk/internal/probe"
@@ -43,8 +57,11 @@ import (
 	"github.com/cyb3r3xpl0it/subhawk/internal/ratelimit"
 	"github.com/cyb3r3xpl0it/subhawk/internal/report"
 	"github.com/cyb3r3xpl0it/subhawk/internal/resolver"
+	"github.com/cyb3r3xpl0it/subhawk/internal/reversewhois"
 	"github.com/cyb3r3xpl0it/subhawk/internal/screenshot"
+	"github.com/cyb3r3xpl0it/subhawk/internal/smuggling"
 	"github.com/cyb3r3xpl0it/subhawk/internal/sources"
+	"github.com/cyb3r3xpl0it/subhawk/internal/ssrf"
 	"github.com/cyb3r3xpl0it/subhawk/internal/ssl"
 	"github.com/cyb3r3xpl0it/subhawk/internal/store"
 	"github.com/cyb3r3xpl0it/subhawk/internal/summary"
@@ -122,6 +139,23 @@ var (
 	doCertCorrelate     bool
 	doNeighbors         bool
 	doDork              bool
+	doInternetDB        bool
+	doGreyNoise         bool
+	doAbuseIPDB         bool
+	doASNCIDR           bool
+	doPathDisc          bool
+	doDSStore           bool
+	doCookieCheck       bool
+	doMixedContent      bool
+	doJWTCheck          bool
+	doSSRF              bool
+	doSmuggling         bool
+	doLog4Shell         bool
+	doNuclei            bool
+	nucleiSeverity      string
+	doReverseWhois      bool
+	doDNSHistory        bool
+	doProgress          bool
 	profileName         string
 	watchInterval       string
 	stdinMode           bool
@@ -198,6 +232,25 @@ func init() {
 	rootCmd.Flags().BoolVar(&doFastResolve, "fast-resolve", false, "Use raw UDP resolver for higher throughput (massdns-style)")
 	rootCmd.Flags().BoolVar(&doValidateResolvers, "validate-resolvers", false, "Validate resolvers before scanning")
 
+	// v1.6.0 — intelligence & vuln detection
+	rootCmd.Flags().BoolVar(&doInternetDB, "internetdb", false, "Shodan InternetDB lookup per IP (free, no key)")
+	rootCmd.Flags().BoolVar(&doGreyNoise, "greynoise", false, "GreyNoise community reputation per IP (free)")
+	rootCmd.Flags().BoolVar(&doAbuseIPDB, "abuseipdb", false, "AbuseIPDB reputation per IP (requires API key)")
+	rootCmd.Flags().BoolVar(&doASNCIDR, "asn-cidr", false, "Expand ASN to CIDR prefixes via bgpview.io")
+	rootCmd.Flags().BoolVar(&doPathDisc, "path-disc", false, "Discover paths from robots.txt and sitemap.xml")
+	rootCmd.Flags().BoolVar(&doDSStore, "ds-store", false, "Attempt to fetch and parse .DS_Store files")
+	rootCmd.Flags().BoolVar(&doCookieCheck, "cookie-check", false, "Audit cookie security flags (HttpOnly, Secure, SameSite)")
+	rootCmd.Flags().BoolVar(&doMixedContent, "mixed-content", false, "Detect mixed HTTP content on HTTPS pages")
+	rootCmd.Flags().BoolVar(&doJWTCheck, "jwt-check", false, "Find and analyze JWT tokens in responses")
+	rootCmd.Flags().BoolVar(&doSSRF, "ssrf", false, "Test common parameters for SSRF vulnerabilities")
+	rootCmd.Flags().BoolVar(&doSmuggling, "smuggling", false, "HTTP request smuggling detection (CL.TE probe)")
+	rootCmd.Flags().BoolVar(&doLog4Shell, "log4shell", false, "Log4Shell/Spring4Shell detection via header injection")
+	rootCmd.Flags().BoolVar(&doNuclei, "nuclei", false, "Run nuclei templates against active subdomains (requires nuclei in PATH)")
+	rootCmd.Flags().StringVar(&nucleiSeverity, "nuclei-severity", "medium,high,critical", "Nuclei severity filter")
+	rootCmd.Flags().BoolVar(&doReverseWhois, "reverse-whois", false, "Find other domains by same registrant email")
+	rootCmd.Flags().BoolVar(&doDNSHistory, "dns-history", false, "Fetch historical DNS records (previous IPs)")
+	rootCmd.Flags().BoolVar(&doProgress, "progress", false, "Show progress bar in non-TUI mode")
+
 	// v1.5.0 — extended analysis
 	rootCmd.Flags().BoolVar(&doBanner, "banner", false, "TCP banner grabbing on open ports")
 	rootCmd.Flags().BoolVar(&doAPIDiscover, "api-discover", false, "Discover GraphQL, Swagger/OpenAPI, gRPC, WebSocket endpoints")
@@ -236,6 +289,35 @@ func init() {
 			home, _ := os.UserHomeDir()
 			fmt.Printf("[*] Config created at %s/.config/subhawk/config.yaml\n", home)
 			return nil
+		},
+	})
+
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "update",
+		Short: "Update wordlists and signatures from GitHub",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runUpdate()
+		},
+	})
+
+	// Shell completion subcommands (cobra built-in)
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "completion [bash|zsh|fish|powershell]",
+		Short: "Generate shell completion script",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch args[0] {
+			case "bash":
+				return rootCmd.GenBashCompletion(os.Stdout)
+			case "zsh":
+				return rootCmd.GenZshCompletion(os.Stdout)
+			case "fish":
+				return rootCmd.GenFishCompletion(os.Stdout, true)
+			case "powershell":
+				return rootCmd.GenPowerShellCompletion(os.Stdout)
+			default:
+				return fmt.Errorf("unsupported shell: %s", args[0])
+			}
 		},
 	})
 }
@@ -513,7 +595,7 @@ func run(cmd *cobra.Command, args []string) error {
 		monitor.Watch(interval, func() []string {
 			var subs []string
 			for _, d := range domains {
-				results, _ := enumerate(d, srcOpts, writer, db, stats, tuiProg, diffSet, excludePatterns, 0)
+				results, _ := enumerate(d, srcOpts, cfg, writer, db, stats, tuiProg, diffSet, excludePatterns, 0)
 				for _, r := range results {
 					subs = append(subs, r.Subdomain)
 				}
@@ -528,7 +610,7 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, d := range domains {
-		results, err := enumerate(d, srcOpts, writer, db, stats, tuiProg, diffSet, excludePatterns, 0)
+		results, err := enumerate(d, srcOpts, cfg, writer, db, stats, tuiProg, diffSet, excludePatterns, 0)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[!] Error enumerating %s: %v\n", d, err)
 		}
@@ -583,7 +665,7 @@ func run(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, db *store.DB, stats *summary.Stats, tuiProg *tui.Program, diffSet, excludePatterns map[string]bool, depth int) ([]resolver.Result, error) {
+func enumerate(domain string, srcOpts sources.Options, cfg *config.Config, writer *output.Writer, db *store.DB, stats *summary.Stats, tuiProg *tui.Program, diffSet, excludePatterns map[string]bool, depth int) ([]resolver.Result, error) {
 	tout := time.Duration(timeout) * time.Second
 	ns := "8.8.8.8:53"
 	if len(resolvers) > 0 {
@@ -1226,6 +1308,235 @@ func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, db
 		}
 	}
 
+	// Shodan InternetDB (free, no key)
+	if doInternetDB && len(activeSubs) > 0 {
+		logf("[*] InternetDB lookup for %d subdomains...", len(activeSubs))
+		parallel(len(activeSubs), 10, func(idx int) {
+			if len(activeSubs[idx].IPs) == 0 {
+				return
+			}
+			info := internetdb.Lookup(activeSubs[idx].IPs[0])
+			if info == nil {
+				return
+			}
+			activeSubs[idx].InternetDB = &resolver.InternetDBInfo{
+				Ports: info.Ports, CVEs: info.CVEs,
+				Tags: info.Tags, Hostnames: info.Hostnames, CPEs: info.CPEs,
+			}
+		})
+	}
+
+	// GreyNoise reputation
+	if doGreyNoise && len(activeSubs) > 0 {
+		logf("[*] GreyNoise reputation for %d subdomains...", len(activeSubs))
+		parallel(len(activeSubs), 10, func(idx int) {
+			if len(activeSubs[idx].IPs) == 0 {
+				return
+			}
+			info := greynoise.Lookup(activeSubs[idx].IPs[0])
+			if info == nil {
+				return
+			}
+			activeSubs[idx].GreyNoise = &resolver.GreyNoiseInfo{
+				Noise: info.Noise, Riot: info.Riot,
+				Classification: info.Classification, Name: info.Name, LastSeen: info.LastSeen,
+			}
+		})
+	}
+
+	// AbuseIPDB reputation
+	if doAbuseIPDB && cfg.APIKeys.AbuseIPDB != "" && len(activeSubs) > 0 {
+		logf("[*] AbuseIPDB lookup for %d subdomains...", len(activeSubs))
+		parallel(len(activeSubs), 5, func(idx int) {
+			if len(activeSubs[idx].IPs) == 0 {
+				return
+			}
+			info := abuseipdb.Lookup(activeSubs[idx].IPs[0], cfg.APIKeys.AbuseIPDB)
+			if info == nil {
+				return
+			}
+			activeSubs[idx].AbuseIPDB = &resolver.AbuseIPDBInfo{
+				AbuseScore: info.AbuseScore, TotalReports: info.TotalReports,
+				CountryCode: info.CountryCode, ISP: info.ISP,
+			}
+		})
+	}
+
+	// ASN → CIDR expansion
+	if doASNCIDR && len(activeSubs) > 0 {
+		logf("[*] ASN CIDR expansion...")
+		seenASN := map[string]bool{}
+		for i := range activeSubs {
+			if activeSubs[i].ASN == nil || activeSubs[i].ASN.ASN == "" {
+				continue
+			}
+			asnNum := activeSubs[i].ASN.ASN
+			if seenASN[asnNum] {
+				continue
+			}
+			seenASN[asnNum] = true
+			info := asncidr.LookupASN(asnNum)
+			if info != nil {
+				activeSubs[i].ASNCIDRs = info.Prefixes
+				logf("[+] %s (%s): %d prefixes", asnNum, info.Name, len(info.Prefixes))
+			}
+		}
+	}
+
+	// DNS history
+	if doDNSHistory && len(activeSubs) > 0 {
+		logf("[*] DNS history for %d subdomains...", len(activeSubs))
+		parallel(len(activeSubs), 5, func(idx int) {
+			records := dnshistory.Lookup(activeSubs[idx].Subdomain)
+			for _, r := range records {
+				activeSubs[idx].DNSHistory = append(activeSubs[idx].DNSHistory, r.IP)
+			}
+		})
+	}
+
+	// Reverse WHOIS
+	if doReverseWhois {
+		logf("[*] Reverse WHOIS for domain %s...", domain)
+		related, email := reversewhois.LookupByDomain(domain, tout)
+		if email != "" {
+			logf("[+] Registrant email: %s (%d related domains)", email, len(related))
+			if len(activeSubs) > 0 {
+				activeSubs[0].ReverseWhois = related
+			}
+		}
+	}
+
+	// Path discovery (robots.txt + sitemap.xml)
+	if doPathDisc && len(activeSubs) > 0 {
+		logf("[*] Path discovery for %d subdomains...", len(activeSubs))
+		parallel(len(activeSubs), 10, func(idx int) {
+			res := pathdisc.Discover(activeSubs[idx].Subdomain, tout)
+			if res == nil {
+				return
+			}
+			activeSubs[idx].Paths = &resolver.PathDiscResult{
+				Paths:           res.Paths,
+				DisallowedPaths: res.DisallowedPaths,
+			}
+		})
+	}
+
+	// .DS_Store parsing
+	if doDSStore && len(activeSubs) > 0 {
+		logf("[*] .DS_Store check for %d subdomains...", len(activeSubs))
+		parallel(len(activeSubs), 10, func(idx int) {
+			files := dsstore.Fetch(activeSubs[idx].Subdomain, tout)
+			if len(files) > 0 {
+				activeSubs[idx].DSStoreFiles = files
+			}
+		})
+	}
+
+	// Cookie security check
+	if doCookieCheck && len(activeSubs) > 0 {
+		logf("[*] Cookie security check for %d subdomains...", len(activeSubs))
+		parallel(len(activeSubs), 20, func(idx int) {
+			res := cookiecheck.Check(activeSubs[idx].Subdomain, tout)
+			if res == nil {
+				return
+			}
+			cr := &resolver.CookieCheckResult{Total: res.Total, Secure: res.Secure}
+			for _, issue := range res.Issues {
+				cr.Issues = append(cr.Issues, resolver.CookieIssue{Name: issue.Name, Issue: issue.Issue})
+			}
+			activeSubs[idx].Cookies = cr
+		})
+	}
+
+	// Mixed content detection
+	if doMixedContent && len(activeSubs) > 0 {
+		logf("[*] Mixed content detection for %d subdomains...", len(activeSubs))
+		parallel(len(activeSubs), 10, func(idx int) {
+			activeSubs[idx].MixedContent = mixedcontent.Check(activeSubs[idx].Subdomain, tout)
+		})
+	}
+
+	// JWT analysis
+	if doJWTCheck && len(activeSubs) > 0 {
+		logf("[*] JWT analysis for %d subdomains...", len(activeSubs))
+		parallel(len(activeSubs), 10, func(idx int) {
+			res := jwtcheck.Check(activeSubs[idx].Subdomain, tout)
+			if res == nil {
+				return
+			}
+			for _, f := range res.Findings {
+				activeSubs[idx].JWTs = append(activeSubs[idx].JWTs, resolver.JWTFinding{
+					Token: f.Token, Algorithm: f.Algorithm, Issues: f.Issues,
+				})
+			}
+		})
+	}
+
+	// SSRF testing
+	if doSSRF && len(activeSubs) > 0 {
+		logf("[*] SSRF testing for %d subdomains...", len(activeSubs))
+		parallel(len(activeSubs), 5, func(idx int) {
+			results := ssrf.Check(activeSubs[idx].Subdomain, tout*2)
+			for _, r := range results {
+				activeSubs[idx].SSRFParams = append(activeSubs[idx].SSRFParams, r.Param)
+			}
+		})
+	}
+
+	// HTTP request smuggling
+	if doSmuggling && len(activeSubs) > 0 {
+		logf("[*] Smuggling detection for %d subdomains...", len(activeSubs))
+		parallel(len(activeSubs), 5, func(idx int) {
+			res := smuggling.Check(activeSubs[idx].Subdomain, tout)
+			if res != nil && res.Vulnerable {
+				logf("[!] Smuggling: %s — %s", activeSubs[idx].Subdomain, res.Notes)
+			}
+		})
+	}
+
+	// Log4Shell detection
+	if doLog4Shell && len(activeSubs) > 0 {
+		logf("[*] Log4Shell detection for %d subdomains...", len(activeSubs))
+		parallel(len(activeSubs), 10, func(idx int) {
+			res := log4shell.Check(activeSubs[idx].Subdomain, tout)
+			if res != nil && res.Vulnerable {
+				activeSubs[idx].Log4ShellVuln = true
+			}
+		})
+	}
+
+	// Nuclei integration
+	if doNuclei && len(activeSubs) > 0 {
+		if nucleirun.Available() {
+			logf("[*] Running nuclei against %d subdomains...", len(activeSubs))
+			if tuiProg != nil {
+				tuiProg.SetPhase("Nuclei scan")
+			}
+			subs := make([]string, len(activeSubs))
+			for i, r := range activeSubs {
+				subs[i] = r.Subdomain
+			}
+			nucleiResults := nucleirun.Run(subs, nil, nucleiSeverity, tout*3)
+			for _, nr := range nucleiResults {
+				for i := range activeSubs {
+					if activeSubs[i].Subdomain == nr.Subdomain {
+						nr2 := &resolver.NucleiResult{}
+						for _, f := range nr.Findings {
+							nr2.Findings = append(nr2.Findings, resolver.NucleiFinding{
+								TemplateID: f.TemplateID, Severity: f.Severity,
+								Name: f.Name, URL: f.URL,
+							})
+						}
+						activeSubs[i].NucleiFindings = nr2
+						break
+					}
+				}
+			}
+		} else {
+			logf("[!] nuclei not found in PATH — install from https://github.com/projectdiscovery/nuclei")
+		}
+	}
+
 	// Write all final results
 	if tuiProg != nil {
 		tuiProg.SetPhase("Writing results")
@@ -1247,7 +1558,7 @@ func enumerate(domain string, srcOpts sources.Options, writer *output.Writer, db
 			if r.Subdomain == domain {
 				continue
 			}
-			subResults, _ := enumerate(r.Subdomain, srcOpts, writer, db, stats, tuiProg, diffSet, excludePatterns, depth+1)
+			subResults, _ := enumerate(r.Subdomain, srcOpts, cfg, writer, db, stats, tuiProg, diffSet, excludePatterns, depth+1)
 			activeSubs = append(activeSubs, subResults...)
 		}
 	}
@@ -1352,6 +1663,69 @@ func loadDiffSet(file string, set map[string]bool) error {
 		}
 	}
 	return scanner.Err()
+}
+
+func runUpdate() error {
+	type asset struct {
+		name string
+		url  string
+		dest string
+	}
+	assets := []asset{
+		{
+			name: "common.txt wordlist",
+			url:  "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/DNS/subdomains-top1million-5000.txt",
+			dest: "wordlists/common.txt",
+		},
+		{
+			name: "resolvers.txt",
+			url:  "https://raw.githubusercontent.com/trickest/resolvers/main/resolvers.txt",
+			dest: "wordlists/resolvers.txt",
+		},
+	}
+
+	if err := os.MkdirAll("wordlists", 0755); err != nil {
+		return err
+	}
+
+	for _, a := range assets {
+		fmt.Printf("[*] Downloading %s...", a.name)
+		resp, err := http.Get(a.url) //nolint:noctx
+		if err != nil {
+			fmt.Printf(" FAILED: %v\n", err)
+			continue
+		}
+		data, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			fmt.Printf(" FAILED: %v\n", err)
+			continue
+		}
+		if err := os.WriteFile(a.dest, data, 0644); err != nil {
+			fmt.Printf(" FAILED: %v\n", err)
+			continue
+		}
+		fmt.Printf(" OK (%d KB → %s)\n", len(data)/1024, a.dest)
+	}
+	return nil
+}
+
+// printProgress prints a simple progress line in non-TUI mode when --progress is set.
+func printProgress(current, total int, label string) {
+	if !doProgress {
+		return
+	}
+	pct := 0
+	if total > 0 {
+		pct = current * 100 / total
+	}
+	width := 30
+	filled := width * pct / 100
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
+	fmt.Printf("\r[%s] %3d%% (%d/%d) %s   ", bar, pct, current, total, label)
+	if current >= total {
+		fmt.Println()
+	}
 }
 
 func readLines(path string) ([]string, error) {

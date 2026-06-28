@@ -158,6 +158,62 @@ type CertInfo struct {
 	Fingerprint    string
 }
 
+type InternetDBInfo struct {
+	Ports     []int
+	CVEs      []string
+	Tags      []string
+	Hostnames []string
+	CPEs      []string
+}
+
+type GreyNoiseInfo struct {
+	Noise          bool
+	Riot           bool
+	Classification string
+	Name           string
+	LastSeen       string
+}
+
+type AbuseIPDBInfo struct {
+	AbuseScore   int
+	TotalReports int
+	CountryCode  string
+	ISP          string
+}
+
+type PathDiscResult struct {
+	Paths           []string
+	DisallowedPaths []string
+}
+
+type CookieIssue struct {
+	Name  string
+	Issue string
+}
+
+type CookieCheckResult struct {
+	Issues []CookieIssue
+	Total  int
+	Secure int
+}
+
+type JWTFinding struct {
+	Token     string
+	Algorithm string
+	Issues    []string
+}
+
+type NucleiResult struct {
+	Findings []NucleiFinding
+}
+
+type NucleiFinding struct {
+	TemplateID string
+	Severity   string
+	Name       string
+	URL        string
+}
+
 type Result struct {
 	Subdomain       string
 	IPs             []string
@@ -192,6 +248,20 @@ type Result struct {
 	WHOIS           *WHOISInfo
 	CertCorrelate   *CertInfo
 	Neighbors       []NeighborHost
+	InternetDB      *InternetDBInfo
+	GreyNoise       *GreyNoiseInfo
+	AbuseIPDB       *AbuseIPDBInfo
+	Paths           *PathDiscResult
+	DSStoreFiles    []string
+	Cookies         *CookieCheckResult
+	MixedContent    []string
+	JWTs            []JWTFinding
+	SSRFParams      []string
+	Log4ShellVuln   bool
+	NucleiFindings  *NucleiResult
+	ASNCIDRs        []string
+	DNSHistory      []string
+	ReverseWhois    []string
 }
 
 var defaultResolvers = []string{
