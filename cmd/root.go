@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"github.com/cyb3r3xpl0it/subhawk/internal/axfr"
 	"github.com/cyb3r3xpl0it/subhawk/internal/banner"
 	"github.com/cyb3r3xpl0it/subhawk/internal/buckets"
+	"github.com/cyb3r3xpl0it/subhawk/internal/cachepoison"
 	"github.com/cyb3r3xpl0it/subhawk/internal/cdnbypass"
 	"github.com/cyb3r3xpl0it/subhawk/internal/certcorrelate"
 	"github.com/cyb3r3xpl0it/subhawk/internal/checkpoint"
@@ -28,17 +30,20 @@ import (
 	"github.com/cyb3r3xpl0it/subhawk/internal/config"
 	"github.com/cyb3r3xpl0it/subhawk/internal/cookiecheck"
 	"github.com/cyb3r3xpl0it/subhawk/internal/cors"
+	"github.com/cyb3r3xpl0it/subhawk/internal/cvelookup"
 	"github.com/cyb3r3xpl0it/subhawk/internal/defaultcreds"
 	"github.com/cyb3r3xpl0it/subhawk/internal/dnshistory"
 	"github.com/cyb3r3xpl0it/subhawk/internal/dnsrecords"
 	"github.com/cyb3r3xpl0it/subhawk/internal/dork"
 	"github.com/cyb3r3xpl0it/subhawk/internal/dsstore"
 	"github.com/cyb3r3xpl0it/subhawk/internal/emailscore"
+	"github.com/cyb3r3xpl0it/subhawk/internal/errordisc"
 	"github.com/cyb3r3xpl0it/subhawk/internal/exposed"
 	"github.com/cyb3r3xpl0it/subhawk/internal/fastresolver"
 	"github.com/cyb3r3xpl0it/subhawk/internal/favicon"
 	"github.com/cyb3r3xpl0it/subhawk/internal/greynoise"
 	"github.com/cyb3r3xpl0it/subhawk/internal/headers"
+	"github.com/cyb3r3xpl0it/subhawk/internal/httpmethods"
 	"github.com/cyb3r3xpl0it/subhawk/internal/internetdb"
 	"github.com/cyb3r3xpl0it/subhawk/internal/jsscrape"
 	"github.com/cyb3r3xpl0it/subhawk/internal/jwtcheck"
@@ -66,9 +71,11 @@ import (
 	"github.com/cyb3r3xpl0it/subhawk/internal/store"
 	"github.com/cyb3r3xpl0it/subhawk/internal/summary"
 	"github.com/cyb3r3xpl0it/subhawk/internal/takeover"
+	"github.com/cyb3r3xpl0it/subhawk/internal/techdetect"
 	"github.com/cyb3r3xpl0it/subhawk/internal/tui"
 	"github.com/cyb3r3xpl0it/subhawk/internal/vhostfuzz"
 	"github.com/cyb3r3xpl0it/subhawk/internal/waf"
+	"github.com/cyb3r3xpl0it/subhawk/internal/webfuzz"
 	"github.com/cyb3r3xpl0it/subhawk/internal/whois"
 	"github.com/cyb3r3xpl0it/subhawk/internal/wildcard"
 	"github.com/cyb3r3xpl0it/subhawk/internal/zonewalk"
@@ -159,6 +166,16 @@ var (
 	profileName         string
 	watchInterval       string
 	stdinMode           bool
+
+	// v1.7.0 flags
+	doTechDetect   bool
+	doCVELookup    bool
+	doWebFuzz      bool
+	doHTTPMethods  bool
+	doCachePoison  bool
+	doErrorDisc    bool
+	webFuzzExts    []string
+	webFuzzThreads int
 )
 
 var rootCmd = &cobra.Command{
@@ -250,6 +267,16 @@ func init() {
 	rootCmd.Flags().BoolVar(&doReverseWhois, "reverse-whois", false, "Find other domains by same registrant email")
 	rootCmd.Flags().BoolVar(&doDNSHistory, "dns-history", false, "Fetch historical DNS records (previous IPs)")
 	rootCmd.Flags().BoolVar(&doProgress, "progress", false, "Show progress bar in non-TUI mode")
+
+	// v1.7.0 — tech detection, CVE lookup, fuzzing, HTTP methods, cache poisoning, error discovery
+	rootCmd.Flags().BoolVar(&doTechDetect, "tech-detect", false, "Wappalyzer-style technology detection (200+ signatures)")
+	rootCmd.Flags().BoolVar(&doCVELookup, "cve-lookup", false, "CVE lookup for detected technologies via NVD + OSV.dev (requires --tech-detect)")
+	rootCmd.Flags().BoolVar(&doWebFuzz, "web-fuzz", false, "Directory/file fuzzing (built-in wordlist or --wordlist)")
+	rootCmd.Flags().BoolVar(&doHTTPMethods, "http-methods", false, "Enumerate allowed HTTP methods via OPTIONS probe")
+	rootCmd.Flags().BoolVar(&doCachePoison, "cache-poison", false, "Detect HTTP cache poisoning via host header injection")
+	rootCmd.Flags().BoolVar(&doErrorDisc, "error-disc", false, "Discover debug endpoints, stack traces, version disclosure")
+	rootCmd.Flags().StringSliceVar(&webFuzzExts, "web-fuzz-exts", nil, "Extra extensions for web fuzzing (e.g. .php,.bak,.old)")
+	rootCmd.Flags().IntVar(&webFuzzThreads, "web-fuzz-threads", 20, "Concurrent threads for web fuzzing per subdomain")
 
 	// v1.5.0 — extended analysis
 	rootCmd.Flags().BoolVar(&doBanner, "banner", false, "TCP banner grabbing on open ports")
@@ -1535,6 +1562,141 @@ func enumerate(domain string, srcOpts sources.Options, cfg *config.Config, write
 		} else {
 			logf("[!] nuclei not found in PATH — install from https://github.com/projectdiscovery/nuclei")
 		}
+	}
+
+	// Tech detection (Wappalyzer-style)
+	if doTechDetect && len(activeSubs) > 0 {
+		logf("[*] Tech detection for %d subdomains...", len(activeSubs))
+		if tuiProg != nil {
+			tuiProg.SetPhase("Tech detection")
+		}
+		parallel(len(activeSubs), 15, func(idx int) {
+			res := techdetect.Detect(activeSubs[idx].Subdomain, tout)
+			if res == nil {
+				return
+			}
+			for _, t := range res.Techs {
+				activeSubs[idx].Techs = append(activeSubs[idx].Techs, resolver.TechInfo{
+					Name: t.Name, Version: t.Version, Category: t.Category,
+				})
+			}
+		})
+	}
+
+	// CVE lookup (depends on tech detection populating Techs)
+	if doCVELookup && len(activeSubs) > 0 {
+		logf("[*] CVE lookup for detected technologies...")
+		if tuiProg != nil {
+			tuiProg.SetPhase("CVE lookup")
+		}
+		parallel(len(activeSubs), 3, func(idx int) {
+			if len(activeSubs[idx].Techs) == 0 {
+				return
+			}
+			techs := make([]struct{ Name, Version string }, len(activeSubs[idx].Techs))
+			for i, t := range activeSubs[idx].Techs {
+				techs[i] = struct{ Name, Version string }{t.Name, t.Version}
+			}
+			cveResults := cvelookup.LookupAll(techs)
+			for _, r := range cveResults {
+				for _, c := range r.CVEs {
+					activeSubs[idx].CVEs = append(activeSubs[idx].CVEs, resolver.CVEInfo{
+						ID: c.ID, Tech: r.Tech, Description: c.Description,
+						CVSS: c.CVSS, Severity: c.Severity, URL: c.URL,
+					})
+				}
+			}
+		})
+	}
+
+	// Web fuzzing (directory/file brute-force)
+	if doWebFuzz && len(activeSubs) > 0 {
+		logf("[*] Web fuzzing for %d subdomains...", len(activeSubs))
+		if tuiProg != nil {
+			tuiProg.SetPhase("Web fuzzing")
+		}
+		// Load wordlist bytes once; each goroutine gets its own bytes.Reader
+		var wfWordlistData []byte
+		if wordlist != "" {
+			wfWordlistData, _ = os.ReadFile(wordlist)
+		}
+		parallel(len(activeSubs), 5, func(idx int) {
+			var wfReader io.Reader
+			if len(wfWordlistData) > 0 {
+				wfReader = bytes.NewReader(wfWordlistData)
+			}
+			res := webfuzz.Fuzz(activeSubs[idx].Subdomain, wfReader, webFuzzExts, nil, webFuzzThreads, tout)
+			if res == nil {
+				return
+			}
+			for _, h := range res.Hits {
+				activeSubs[idx].FuzzHits = append(activeSubs[idx].FuzzHits, resolver.FuzzHit{
+					URL: h.URL, StatusCode: h.StatusCode, BodySize: h.BodySize,
+					Title: h.Title, Redirect: h.Redirect,
+				})
+			}
+		})
+	}
+
+	// HTTP methods enumeration
+	if doHTTPMethods && len(activeSubs) > 0 {
+		logf("[*] HTTP methods enumeration for %d subdomains...", len(activeSubs))
+		if tuiProg != nil {
+			tuiProg.SetPhase("HTTP methods")
+		}
+		parallel(len(activeSubs), 15, func(idx int) {
+			res := httpmethods.Enumerate(activeSubs[idx].Subdomain, tout)
+			if res == nil {
+				return
+			}
+			activeSubs[idx].HTTPMethods = &resolver.HTTPMethodsInfo{
+				AllowedMethods:   res.AllowedMethods,
+				DangerousMethods: res.DangerousMethods,
+			}
+			if len(res.DangerousMethods) > 0 {
+				logf("[!] %s allows dangerous methods: %s", activeSubs[idx].Subdomain, strings.Join(res.DangerousMethods, ", "))
+			}
+		})
+	}
+
+	// Cache poisoning detection
+	if doCachePoison && len(activeSubs) > 0 {
+		logf("[*] Cache poisoning check for %d subdomains...", len(activeSubs))
+		if tuiProg != nil {
+			tuiProg.SetPhase("Cache poison")
+		}
+		parallel(len(activeSubs), 10, func(idx int) {
+			res := cachepoison.Check(activeSubs[idx].Subdomain, tout)
+			if res == nil {
+				return
+			}
+			for _, f := range res.Findings {
+				activeSubs[idx].CachePoison = append(activeSubs[idx].CachePoison, resolver.CachePoisonInfo{
+					Technique: f.Technique, Reflected: f.Reflected,
+					CacheHeader: f.CacheHeader, Evidence: f.Evidence,
+				})
+			}
+		})
+	}
+
+	// Error page / debug endpoint discovery
+	if doErrorDisc && len(activeSubs) > 0 {
+		logf("[*] Error/debug discovery for %d subdomains...", len(activeSubs))
+		if tuiProg != nil {
+			tuiProg.SetPhase("Error discovery")
+		}
+		parallel(len(activeSubs), 10, func(idx int) {
+			res := errordisc.Check(activeSubs[idx].Subdomain, tout)
+			if res == nil {
+				return
+			}
+			for _, f := range res.Findings {
+				activeSubs[idx].ErrorDisc = append(activeSubs[idx].ErrorDisc, resolver.ErrorDiscInfo{
+					Type: f.Type, URL: f.URL, Description: f.Description,
+					StatusCode: f.StatusCode, Evidence: f.Evidence,
+				})
+			}
+		})
 	}
 
 	// Write all final results

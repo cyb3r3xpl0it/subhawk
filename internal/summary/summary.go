@@ -44,6 +44,12 @@ type Stats struct {
 	Log4ShellFound  int
 	NucleiFindings  int
 	DSStoreFound    int
+	TechsDetected   int
+	CVEsFound       int
+	FuzzHits        int
+	DangerousMethods int
+	CachePoisoned   int
+	DebugEndpoints  int
 }
 
 func New() *Stats {
@@ -144,6 +150,14 @@ func (s *Stats) Add(r resolver.Result) {
 	if len(r.DSStoreFiles) > 0 {
 		s.DSStoreFound++
 	}
+	s.TechsDetected += len(r.Techs)
+	s.CVEsFound += len(r.CVEs)
+	s.FuzzHits += len(r.FuzzHits)
+	if r.HTTPMethods != nil {
+		s.DangerousMethods += len(r.HTTPMethods.DangerousMethods)
+	}
+	s.CachePoisoned += len(r.CachePoison)
+	s.DebugEndpoints += len(r.ErrorDisc)
 }
 
 func (s *Stats) Print() {
@@ -211,6 +225,12 @@ func (s *Stats) Print() {
 	printFinding("Log4Shell detections", s.Log4ShellFound, "\033[31m")
 	printFinding("Nuclei findings", s.NucleiFindings, "\033[31m")
 	printFinding(".DS_Store exposed", s.DSStoreFound, "\033[31m")
+	printFinding("Techs detected", s.TechsDetected, "\033[36m")
+	printFinding("CVEs found", s.CVEsFound, "\033[31m")
+	printFinding("Fuzz hits", s.FuzzHits, "\033[33m")
+	printFinding("Dangerous HTTP methods", s.DangerousMethods, "\033[31m")
+	printFinding("Cache poisoning", s.CachePoisoned, "\033[31m")
+	printFinding("Debug endpoints", s.DebugEndpoints, "\033[31m")
 	fmt.Println(sep)
 }
 

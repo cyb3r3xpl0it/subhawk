@@ -214,6 +214,49 @@ type NucleiFinding struct {
 	URL        string
 }
 
+type TechInfo struct {
+	Name     string
+	Version  string
+	Category string
+}
+
+type CVEInfo struct {
+	ID          string
+	Tech        string
+	Description string
+	CVSS        float64
+	Severity    string
+	URL         string
+}
+
+type FuzzHit struct {
+	URL        string
+	StatusCode int
+	BodySize   int
+	Title      string
+	Redirect   string
+}
+
+type HTTPMethodsInfo struct {
+	AllowedMethods   []string
+	DangerousMethods []string
+}
+
+type CachePoisonInfo struct {
+	Technique   string
+	Reflected   bool
+	CacheHeader string
+	Evidence    string
+}
+
+type ErrorDiscInfo struct {
+	Type        string
+	URL         string
+	Description string
+	StatusCode  int
+	Evidence    string
+}
+
 type Result struct {
 	Subdomain       string
 	IPs             []string
@@ -262,6 +305,12 @@ type Result struct {
 	ASNCIDRs        []string
 	DNSHistory      []string
 	ReverseWhois    []string
+	Techs           []TechInfo
+	CVEs            []CVEInfo
+	FuzzHits        []FuzzHit
+	HTTPMethods     *HTTPMethodsInfo
+	CachePoison     []CachePoisonInfo
+	ErrorDisc       []ErrorDiscInfo
 }
 
 var defaultResolvers = []string{
